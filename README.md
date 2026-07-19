@@ -102,13 +102,6 @@ This repository is both a plugin and its own Claude Code marketplace.
 /plugin install owasp-security-audit@owasp-security-audit-marketplace
 ```
 
-To test a local change without going through a marketplace:
-
-```bash
-git clone git@github.com:ayman-benmada/owasp-security-audit.git
-claude --plugin-dir ./owasp-security-audit
-```
-
 ## Usage
 
 Once the plugin is enabled, Claude can invoke the skill automatically as soon as a security audit request is detected in the conversation, or it can be invoked explicitly:
@@ -141,6 +134,15 @@ skills/
         ├── A08-software-or-data-integrity-failures.md
         ├── A09-security-logging-and-alerting-failures.md
         └── A10-mishandling-of-exceptional-conditions.md
+```
+
+## Development
+
+To test a local change without going through the marketplace:
+
+```bash
+git clone git@github.com:ayman-benmada/owasp-security-audit.git
+claude --plugin-dir ./owasp-security-audit
 ```
 
 ## Limitations
