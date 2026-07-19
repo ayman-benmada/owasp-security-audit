@@ -105,7 +105,7 @@ claude --plugin-dir ./owasp-security-audit
 Once the plugin is enabled, Claude can invoke the skill automatically as soon as a security audit request is detected in the conversation, or it can be invoked explicitly:
 
 ```
-/owasp-security-audit:owasp-security-audit
+/owasp-security-audit:security-audit
 ```
 
 Example request:
@@ -119,7 +119,7 @@ Example request:
 ├── plugin.json                                # Plugin manifest
 └── marketplace.json                           # Marketplace catalog (self-hosted)
 skills/
-└── owasp-security-audit/
+└── security-audit/
     ├── SKILL.md                               # Main orchestrator (5 steps)
     └── references/
         ├── A01-broken-access-control.md

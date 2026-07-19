@@ -1,5 +1,5 @@
 ---
-name: owasp-security-audit
+name: security-audit
 description: >
   Performs a complete application security analysis based on the OWASP Top 10 (2025).
   Use this skill whenever the user mentions: security audit, OWASP analysis,
