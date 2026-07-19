@@ -143,7 +143,7 @@ Example request:
 .cursor-plugin/
 └── plugin.json                                # Cursor plugin manifest
 assets/
-└── logo.svg                                   # Marketplace logo
+└── logo.png                                   # Marketplace logo
 skills/
 └── security-audit/                            # Shared skill (Claude + Cursor)
     ├── SKILL.md                               # Main orchestrator (5 steps)
