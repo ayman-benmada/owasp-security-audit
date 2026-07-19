@@ -32,7 +32,16 @@ Before the category-by-category analysis, 10 high-impact patterns are checked fi
 
 ### 4. Execution environment detection
 
-When dynamic checks are relevant, the skill detects whether it is already running inside a Docker container or on the host machine, and **never runs a command without**: announcing the command, specifying the execution context (host / `docker exec`), and requesting the user's explicit validation before execution.
+Before any **runtime** check (`npm`, `node`, `pip`, `php`, etc.), the skill resolves an **Execution Context**:
+
+- Classifies commands as **static** (host workspace), **runtime** (chosen context only), or **infra** (Docker/Podman/nerdctl CLI on the host)
+- Detects whether it is already in a container, whether the project is dockerized (`Dockerfile`, Compose, `.devcontainer`), and which container CLI is available
+- If containers are stopped: **asks** whether to start them or to run checks on the host
+- Selects the app service automatically when possible, or asks when several candidates exist
+- On host fallback for a dockerized project: compares host vs declared image versions, warns on mismatch, and records it in the **audit report** Limitations section (when that situation applies)
+- **Never** runs a runtime command without announcing it, specifying context (`exec_prefix`, working directory), and getting explicit user validation
+
+The resolved Execution Context is passed to every category sub-agent on large codebases so parallel analysis cannot bypass it.
 
 ### 5. Analysis by category
 
@@ -117,7 +126,7 @@ Example request:
 ```
 .claude-plugin/
 ├── plugin.json                                # Plugin manifest
-└── marketplace.json                           # Marketplace catalog (self-hosted)
+└── marketplace.json                           # Marketplace catalog
 skills/
 └── security-audit/
     ├── SKILL.md                               # Main orchestrator (5 steps)
@@ -136,7 +145,7 @@ skills/
 
 ## Limitations
 
-- Analysis is primarily **static**: dynamic checks (DAST, command execution) are only proposed after the user's explicit validation, with the execution context specified (host / Docker container)
+- Analysis is primarily **static**: optional runtime checks are proposed only with the user's explicit approval (never automated DAST)
 - The depth of the analysis depends on the context provided (code excerpt vs. full codebase); any limitation is stated in the report's "Limitations" section
 - Does not replace a tooled penetration test (automated SAST/DAST, fuzzing) or a review by a certified pentester on a high-stakes scope
 

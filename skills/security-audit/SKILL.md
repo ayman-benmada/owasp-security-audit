@@ -159,51 +159,145 @@ Before the category-by-category analysis, check these high-impact patterns:
 
 ## Step 2 - Detection of the Execution Environment
 
-Before running any verification command, identify the execution context to determine where dynamic tests should be carried out.
+Before running any **runtime** verification command, resolve an **Execution Context** and keep it for the entire audit. Static analysis of the workspace does not require this context, but must never be confused with runtime checks.
 
-### Automatic Detection
+### Command classification
 
-Run the following checks to determine the environment:
+| Type                      | Examples                                                                                      | Where to run                             |
+| ------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| **Static**                | `grep`, `find`, reading source files, `git`                                                   | Always on the host workspace             |
+| **Runtime**               | `npm`, `node`, `npx`, `pip`, `python`, `php`, `composer`, `go`, `java`, `bundle`, `npm audit` | Only inside the chosen Execution Context |
+| **Infra (container CLI)** | `docker ps`, `docker compose up`, `docker exec`, `podman …`, `nerdctl …`                      | Host (managing containers)               |
+
+> **Hard rule:** never execute a **runtime** command until the Execution Context is resolved **and** the user has explicitly validated that specific command. Never silently run runtime tools on the host when the project is dockerized.
+
+### Automatic detection (ordered)
+
+Run these checks (infra/static; announce if they need elevated permissions):
 
 ```bash
-# Check whether we are already inside a container
-ls /.dockerenv 2>/dev/null && echo "IN_CONTAINER" || cat /proc/1/cgroup 2>/dev/null | grep -qi docker && echo "IN_CONTAINER" || echo "HOST"
+# 1. Already inside a container?
+ls /.dockerenv 2>/dev/null && echo "IN_CONTAINER"
+cat /proc/1/cgroup 2>/dev/null | grep -qiE 'docker|podman|containerd' && echo "IN_CONTAINER"
 
-# If on the host machine, list active containers
-docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null
+# 2. Project dockerized signals
+ls Dockerfile Dockerfile.* docker-compose.yml docker-compose.yaml compose.yml compose.yaml .dockerignore 2>/dev/null
+ls -d .devcontainer 2>/dev/null && echo "DEVCONTAINER_PRESENT"
+
+# 3. Container CLI availability (prefer docker, then podman, then nerdctl)
+command -v docker >/dev/null && echo "CLI=docker"
+command -v podman >/dev/null && echo "CLI=podman"
+command -v nerdctl >/dev/null && echo "CLI=nerdctl"
+
+# 4. Running containers / compose services (replace $CLI)
+$CLI ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null
+$CLI compose ps 2>/dev/null
 ```
 
-### Decision Tree
+If the CLI is missing, the daemon is down, or permission is denied: record it in Limitations, **do not** silently assume a healthy Docker runtime. If the project is dockerized, warn strongly and ask the user whether to continue on the host.
+
+### App service selection (Rule C)
+
+When Compose (or multiple containers) is present:
+
+1. Prefer services that look like application runtimes (Node / PHP / Python / Java / Go / Ruby images or builds, `WORKDIR`, HTTP ports).
+2. Exclude pure infra roles by default (`db`, `redis`, `mail`, `mysql`, `postgres`, `mongo`, `elasticsearch`, etc.).
+3. **Auto-propose** the best single candidate.
+4. If **several** plausible app services exist: list them and **ask the user** which to target.
+
+### Decision tree
 
 ```
-Detected environment?
-├── Host machine with Docker available
-│   └── → Offer to run the tests inside the targeted container
-│         (e.g.: docker exec <container> <command>)
-├── Already inside a Docker container
-│   └── → Run the tests locally inside the current container
-└── Host machine without Docker (native application)
-    └── → Run the tests directly on the host machine
+Already IN_CONTAINER?
+├── Yes → mode = in-container (current container)
+└── No → project dockerized (Dockerfile / Compose / .devcontainer)?
+    ├── No → mode = host (native)
+    └── Yes → containers / services running?
+        ├── Yes → select service (Rule C)
+        │         → mode = docker-exec (compose exec or exec)
+        └── No → ASK the user:
+              (1) Start the required services, then test inside
+              (2) Test outside Docker (host)
+              If (1) → propose `$CLI compose up` (or equivalent), require validation,
+                       wait for healthy services, then select service (Rule C)
+              If (2) → compare host versions vs Dockerfile/Compose declared versions,
+                       warn on mismatch, confirm, then mode = host
 ```
 
-### Mandatory Validation Rules Before Any Execution
+Memorize the resolved context for the whole audit. Recall it in every runtime validation prompt.
+
+### Execution Context contract
+
+Fill this block once in Step 2; reuse it for every dynamic check and pass it to every sub-agent:
+
+```
+Execution Context:
+- mode: host | docker-exec | in-container
+- project_dockerized: yes | no
+- compose_file: <path|none>
+- target_service: <name|none>
+- target_container: <name|id|none>
+- container_cli: docker | podman | nerdctl | none
+- exec_prefix: "" | "<cli> compose exec -w <cwd> <service>" | "<cli> exec -w <cwd> <container>"
+- working_directory: <path inside runtime>
+- runtime_versions: { node: ..., php: ..., python: ... }
+- host_vs_declared_diff: none | warned | accepted
+- notes: [...]
+```
+
+**Rule:** every runtime command is executed as `exec_prefix + command` (when `exec_prefix` is empty, the command runs in the current context: host or in-container).
+
+### Working directory resolution
+
+Before any `exec`, resolve `working_directory` in this order:
+
+1. Compose service `working_dir` if set
+2. Dockerfile `WORKDIR` for the target image/build
+3. Project root as mounted in the container (from volume mounts when available)
+4. Fallback: `/` only if unknown — state this in Limitations / `notes`
+
+### Version comparison (host fallback while project is dockerized)
+
+When the user chooses option (2) host testing:
+
+1. Read declared runtimes from Dockerfile / Compose (`FROM node:20`, `php:8.3`, Python image tags, etc.).
+2. Probe host versions (`node -v`, `php -v`, `python --version`, …) only after announcing them and getting validation if treated as execution.
+3. On major or clearly incompatible mismatch: **warn** and ask confirmation.
+4. Set `host_vs_declared_diff` to `warned` or `accepted`.
+5. Mention the mismatch in the report Limitations section.
+
+### Edge cases (mandatory)
+
+| Case                                          | Behavior                                                                                        |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| CLI missing / daemon down / permission denied | Limitations + offer host; if dockerized, warn strongly; user must choose                        |
+| `.devcontainer/` present                      | Treat as dockerized; prefer associated dev container if detectable; else same start-vs-host ask |
+| WORKDIR / volume mismatch                     | Resolve `working_directory` before exec                                                         |
+| Multiple app service candidates               | List and ask (Rule C)                                                                           |
+| Podman / nerdctl                              | Same tree with detected `container_cli`                                                         |
+| Container start fails                         | Analyze error; do not invent findings; re-offer host or retry                                   |
+
+### Mandatory validation rules before any execution
 
 > **Never execute a command without:**
 >
 > 1. Announcing the command and its purpose
-> 2. Specifying the context (host / `docker exec <container_name>`)
+> 2. Specifying the Execution Context (mode, service/container, working dir, `exec_prefix`)
 > 3. **Requesting explicit validation from the user**
 > 4. In case of failure, analyzing the error before reporting it as a finding
 
-**Validation request format to use systematically:**
+**Validation request format (use systematically for runtime and infra commands that change state):**
 
 ```
 I would like to execute the following command to verify [objective]:
-→ Context : [host machine / docker exec <container_name>]
-→ Command : `<command>`
-→ Reason  : [what this allows to verify, the OWASP category concerned]
+→ Context : [host | compose exec <service> | exec <container> | already in-container]
+→ Working dir : [<path>]
+→ Command : `<full command including prefix>`
+→ Runtime : [node X / php Y / … from chosen context]
+→ Reason  : [OWASP category + what it verifies]
+→ Note    : [version mismatch warning if any]
 
-Do you confirm execution? (yes / no / modify)
+Do you confirm? (yes / no / modify / switch to host|container)
 ```
 
 ---
@@ -241,9 +335,11 @@ Announce progress at the start of each category:
 
 **Large codebase (> 50 source files)** → dispatch one sub-agent per OWASP category via the Agent tool:
 
-- Each sub-agent receives: the reference file (`references/A0X-*.md`) + the scope + the quick triage results
+- Each sub-agent receives: the reference file (`references/A0X-*.md`) + the scope + the quick triage results + the **full Execution Context block** from Step 2
+- Instruct each sub-agent: runtime commands **must** use `exec_prefix`; static analysis may use the host workspace; never invent findings from failed execs
 - Each sub-agent returns its findings in the OWASP-A0X-NNN format
 - Aggregate and deduplicate the findings before producing the report (Step 5)
+- If a dynamic check could not run because of context limits, keep ⚪ Low confidence / `[MANUAL VERIFICATION REQUIRED]` and note it in Limitations
 
 ---
 
@@ -253,7 +349,7 @@ For each OWASP category analyzed:
 
 1. Read the corresponding sub-skill (`references/A0X-*.md`)
 2. Apply the detection patterns defined in the sub-skill
-3. If a dynamic check is relevant, follow the Step 2 protocol (environment detection + validation)
+3. If a dynamic check is relevant, follow the Step 2 protocol (Execution Context already resolved + per-command validation). Runtime commands must use `exec_prefix`.
 4. Classify each finding according to the severity grid below
 5. Document it according to the report format (Step 5)
 
@@ -305,6 +401,7 @@ Produce the following structured report after the analysis. Adapt the verbosity 
 **Scope analyzed:** [short description, e.g.: "Node.js REST API - auth.js and user.controller.js files"]
 **Framework reference:** OWASP Top 10 - 2025
 **Analysis level:** [Complete / Targeted / Partial (limited context)]
+**Execution Context:** [mode=…; service/container=…; cli=…; host_vs_declared_diff=…]
 
 ---
 
@@ -430,6 +527,9 @@ Legend: ✅ Analyzed | ⏭️ Not analyzed (out of scope or insufficient context
 - Infrastructure and server configuration not provided → A05 partially assessed
 - Dependency files (package.json, pom.xml, etc.) missing → A06 not assessable
 - Dynamic tests (DAST) not possible in this context → some stored XSS vectors not statically detectable
+- Project dockerized but dynamic checks ran on host after user choice → runtime may differ from container (`host_vs_declared_diff=…`)
+- Container CLI unavailable / daemon down → runtime checks limited or host-only
+- Working directory inside container uncertain → some runtime checks may have used a fallback cwd
 - [Other context-specific limitations]
 
 ```
@@ -451,4 +551,7 @@ Legend: ✅ Analyzed | ⏭️ Not analyzed (out of scope or insufficient context
 - **Deduplicate cross-category findings**: if the same flaw is detectable in several OWASP categories (e.g.: hardcoded secret → A02 + A04), report it in the most relevant category and add a `→ See also [A0X]` mention in the other categories concerned
 - **`[MANUAL VERIFICATION REQUIRED]` tag**: if the vulnerability is likely but not certain (partially visible code, runtime-dependent behavior, external dependency), keep the finding with ⚪ Low confidence and this tag rather than silently removing it
 - **Exclude test/dev code from the production scope**: a finding in a `*.test.*`, `*.spec.*`, `__tests__/`, `fixtures/` file, or one conditioned on `NODE_ENV=test`, must be noted as ℹ️ Informational or excluded, explicitly state this in "Limitations"
+- **Resolve Execution Context before runtime commands**: complete Step 2 before any `npm` / `node` / `pip` / `php` / `composer` / equivalent. Static `grep`/`find` on the workspace does not bypass this for runtime tools
+- **No silent host fallback on dockerized projects**: if containers are stopped, ask to start them or to test on the host; if the user picks host, warn on version mismatch and record it in Limitations
+- **Sub-agents inherit Execution Context**: when dispatching category sub-agents, always pass the Execution Context block; reject/ignore runtime commands that omit `exec_prefix` when `mode=docker-exec`
 ```
