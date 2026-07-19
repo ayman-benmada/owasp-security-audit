@@ -106,17 +106,7 @@ This repository is both a plugin and its own Claude Code marketplace.
 
 ### Cursor
 
-1. Submit or install from the [Cursor Marketplace](https://cursor.com/marketplace) once listed (submit at [cursor.com/marketplace/publish](https://cursor.com/marketplace/publish)).
-2. Or test locally before / without marketplace listing:
-
-```bash
-mkdir -p ~/.cursor/plugins/local/owasp-security-audit
-rsync -a --delete \
-  --exclude .git \
-  ./ ~/.cursor/plugins/local/owasp-security-audit/
-```
-
-Then reload Cursor (`Developer: Reload Window`). The `security-audit` skill should appear under Agent skills.
+Submit or install from the [Cursor Marketplace](https://cursor.com/marketplace).
 
 ## Usage
 
@@ -168,16 +158,6 @@ skills/
 git clone git@github.com:ayman-benmada/owasp-security-audit.git
 claude --plugin-dir ./owasp-security-audit
 ```
-
-### Cursor
-
-Copy the repo into `~/.cursor/plugins/local/owasp-security-audit` (see Installation), reload the window, then trigger a security audit in Agent chat.
-
-### Publish to Cursor Marketplace
-
-1. Push this repository (public GitHub).
-2. Confirm `.cursor-plugin/plugin.json` is valid and `skills/security-audit/SKILL.md` has frontmatter (`name`, `description`).
-3. Submit the repo URL at [cursor.com/marketplace/publish](https://cursor.com/marketplace/publish).
 
 ## Limitations
 
