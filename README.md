@@ -1,6 +1,6 @@
 # OWASP Security Audit
 
-A **Claude Code** plugin that performs a complete application security audit based on the **OWASP Top 10 (2025)**. It orchestrates 10 category reference guides (one per OWASP category) and produces a structured, actionable vulnerability report prioritized by severity and remediation effort.
+A dual-platform plugin for **Claude Code** and **Cursor** that performs a complete application security audit based on the **OWASP Top 10 (2025)**. It orchestrates 10 category reference guides (one per OWASP category) and produces a structured, actionable vulnerability report prioritized by severity and remediation effort.
 
 This plugin doesn't just apply a generic checklist: it detects the technical stack of the audited project, adapts its detection patterns to the language/framework actually in use, distinguishes server-side code from client-side code (SSR vs CSR), and never runs a dynamic verification command without the user's explicit approval.
 
@@ -95,6 +95,8 @@ The report can be produced in **English (default), French, or Spanish**, at thre
 
 ## Installation
 
+### Claude Code
+
 This repository is both a plugin and its own Claude Code marketplace.
 
 ```
@@ -102,13 +104,31 @@ This repository is both a plugin and its own Claude Code marketplace.
 /plugin install owasp-security-audit@owasp-security-audit-marketplace
 ```
 
+### Cursor
+
+1. Submit or install from the [Cursor Marketplace](https://cursor.com/marketplace) once listed (submit at [cursor.com/marketplace/publish](https://cursor.com/marketplace/publish)).
+2. Or test locally before / without marketplace listing:
+
+```bash
+mkdir -p ~/.cursor/plugins/local/owasp-security-audit
+rsync -a --delete \
+  --exclude .git \
+  ./ ~/.cursor/plugins/local/owasp-security-audit/
+```
+
+Then reload Cursor (`Developer: Reload Window`). The `security-audit` skill should appear under Agent skills.
+
 ## Usage
 
-Once the plugin is enabled, Claude can invoke the skill automatically as soon as a security audit request is detected in the conversation, or it can be invoked explicitly:
+Once the plugin is enabled, the agent can invoke the skill automatically as soon as a security audit request is detected in the conversation, or it can be invoked explicitly.
+
+**Claude Code:**
 
 ```
 /owasp-security-audit:security-audit
 ```
+
+**Cursor:** invoke the `security-audit` skill from chat (or ask for an OWASP security audit in natural language).
 
 Example request:
 
@@ -118,10 +138,14 @@ Example request:
 
 ```
 .claude-plugin/
-├── plugin.json                                # Plugin manifest
-└── marketplace.json                           # Marketplace catalog
+├── plugin.json                                # Claude Code plugin manifest
+└── marketplace.json                           # Claude Code marketplace catalog
+.cursor-plugin/
+└── plugin.json                                # Cursor plugin manifest
+assets/
+└── logo.svg                                   # Marketplace logo
 skills/
-└── security-audit/
+└── security-audit/                            # Shared skill (Claude + Cursor)
     ├── SKILL.md                               # Main orchestrator (5 steps)
     └── references/
         ├── A01-broken-access-control.md
@@ -138,12 +162,22 @@ skills/
 
 ## Development
 
-To test a local change without going through the marketplace:
+### Claude Code
 
 ```bash
 git clone git@github.com:ayman-benmada/owasp-security-audit.git
 claude --plugin-dir ./owasp-security-audit
 ```
+
+### Cursor
+
+Copy the repo into `~/.cursor/plugins/local/owasp-security-audit` (see Installation), reload the window, then trigger a security audit in Agent chat.
+
+### Publish to Cursor Marketplace
+
+1. Push this repository (public GitHub).
+2. Confirm `.cursor-plugin/plugin.json` is valid and `skills/security-audit/SKILL.md` has frontmatter (`name`, `description`).
+3. Submit the repo URL at [cursor.com/marketplace/publish](https://cursor.com/marketplace/publish).
 
 ## Limitations
 

@@ -184,7 +184,7 @@ cat /proc/1/cgroup 2>/dev/null | grep -qiE 'docker|podman|containerd' && echo "I
 ls Dockerfile Dockerfile.* docker-compose.yml docker-compose.yaml compose.yml compose.yaml .dockerignore 2>/dev/null
 ls -d .devcontainer 2>/dev/null && echo "DEVCONTAINER_PRESENT"
 
-# 3. Container CLI availability — pick the first available in this order: docker > podman > nerdctl
+# 3. Container CLI availability: pick the first available in this order: docker > podman > nerdctl
 if command -v docker >/dev/null; then CLI=docker
 elif command -v podman >/dev/null; then CLI=podman
 elif command -v nerdctl >/dev/null; then CLI=nerdctl
@@ -256,7 +256,7 @@ Before any `exec`, resolve `working_directory` in this order:
 1. Compose service `working_dir` if set
 2. Dockerfile `WORKDIR` for the target image/build
 3. Project root as mounted in the container (from volume mounts when available)
-4. Fallback: `/` only if unknown — state this in Limitations / `notes`
+4. Fallback: `/` only if unknown; state this in Limitations / `notes`
 
 ### Version comparison (host fallback while project is dockerized)
 
@@ -478,7 +478,7 @@ The overall security level is insufficient for public exposure."]
 
 #### ⚡ Quick Wins - Fast, High-Impact Gains
 
-[List only Critical or High findings with Low or Medium effort — the priority fixes]
+[List only Critical or High findings with Low or Medium effort: the priority fixes]
 
 | ID            | Title           | Severity | Effort | Timeline  |
 | ------------- | --------------- | -------- | ------ | --------- |

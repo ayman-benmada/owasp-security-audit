@@ -1,6 +1,6 @@
 {
   "name": "owasp-security-audit",
-  "description": "Full application security audit based on the OWASP Top 10 (2025). Scans code, architecture, and configuration for SQL injection, XSS, CSRF, broken access control, weak authentication, exposed secrets, SSRF, and more, then produces a structured, actionable report with severity ratings and concrete fixes.",
+  "description": "OWASP Top 10 (2025) application security audit. Stack-aware scanning for injection, access control, auth, secrets, SSRF, and more. Docker-aware runtime checks only with your approval. Structured report with severity, Quick Wins, and concrete fixes. No invented findings; secrets always masked.",
   "version": "1.0.0",
   "author": {
     "name": "Ayman BENMADA"
