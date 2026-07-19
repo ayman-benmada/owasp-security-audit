@@ -1,6 +1,6 @@
 # OWASP Security Audit
 
-A **Claude Code** plugin that performs a complete application security audit based on the **OWASP Top 10 (2025)**. It orchestrates 10 specialized sub-skills (one per OWASP category) and produces a structured, actionable vulnerability report prioritized by ROI.
+A **Claude Code** plugin that performs a complete application security audit based on the **OWASP Top 10 (2025)**. It orchestrates 10 category reference guides (one per OWASP category) and produces a structured, actionable vulnerability report prioritized by severity and remediation effort.
 
 This plugin doesn't just apply a generic checklist: it detects the technical stack of the audited project, adapts its detection patterns to the language/framework actually in use, distinguishes server-side code from client-side code (SSR vs CSR), and never runs a dynamic verification command without the user's explicit approval.
 
@@ -28,7 +28,7 @@ A stack-to-priority-patterns matrix then guides the analysis (e.g. Node.js+Mongo
 
 ### 3. Quick triage
 
-Before the category-by-category analysis, 10 high-impact patterns are checked first (SQL injection via concatenation, hardcoded secrets, IDOR, JWT decoded without verification, SSRF, unsafe deserialization, debug mode in production, disabled TLS, mass assignment...). These patterns alone cover ~80% of typical critical findings.
+Before the category-by-category analysis, 10 high-impact patterns are checked first (SQL injection via concatenation, hardcoded secrets, IDOR, JWT decoded without verification, SSRF, unsafe deserialization, debug mode in production, disabled TLS, mass assignment...). These patterns are high-yield starting points for typical critical findings.
 
 ### 4. Execution environment detection
 
@@ -45,7 +45,7 @@ The resolved Execution Context is passed to every category sub-agent on large co
 
 ### 5. Analysis by category
 
-Each OWASP category has a dedicated reference sub-skill (see table below), loaded on demand. For small codebases (< 50 files), the analysis is sequential; beyond that, one sub-agent is dispatched per OWASP category in parallel, and the results are then aggregated and deduplicated.
+Each OWASP category has a dedicated reference guide (see table below), loaded on demand. For small codebases (< 50 files), the analysis is sequential; beyond that, one sub-agent is dispatched per OWASP category in parallel, and the results are then aggregated and deduplicated.
 
 Each finding is classified according to:
 

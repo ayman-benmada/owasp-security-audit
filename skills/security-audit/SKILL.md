@@ -8,13 +8,13 @@ description: >
   verify the security of code, an architecture, or a configuration.
   Also trigger for terms such as: SQL injection, XSS, CSRF, weak authentication,
   secrets in code, sensitive data exposure, access control, SSRF.
-  This skill orchestrates 10 specialized sub-skills and produces a structured, actionable report.
+  This skill orchestrates 10 OWASP category reference guides and produces a structured, actionable report.
 ---
 
 # OWASP Security Audit - Main Skill
 
 This skill orchestrates the application security analysis according to the **OWASP Top 10 (2025)**.
-It coordinates 10 specialized sub-skills and produces a structured vulnerability report.
+It coordinates 10 category reference guides (`references/A0X-*.md`) and produces a structured vulnerability report.
 
 ---
 
@@ -28,7 +28,7 @@ Before any analysis, identify the context available. If the user has provided on
 - Language(s) and framework(s) used
 - Desired scope: complete analysis (A01 to A10) or specific category/categories
 - Desired report level: executive (summary) / technical (detailed) / exhaustive (with complete remediation)
-- **Report language**: ask for the desired language (default: **English**). Options: English, French, Spanish. Store the choice and apply it to the entire report (Step 5), including the Docker validation block (Step 2).
+- **Report language**: ask for the desired language (default: **English**). Options: English, French, Spanish. Store the choice and apply it to the entire report (Step 5), including the Execution Context validation prompts (Step 2).
 
 > If the context is partial, perform the analysis on what is visible and flag the limitations in the "Limitations" section.
 
@@ -45,10 +45,10 @@ Identify the stack before analyzing in order to **prioritize the most relevant p
 find . -type f \( -name "*.php" -o -name "*.py" -o -name "*.java" -o -name "*.go" -o -name "*.ts" -o -name "*.js" -o -name "*.rb" \) | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -10
 
 # Node.js / TypeScript
-grep -rn "mongoose\|prisma\|sequelize\|typeorm\|redis" --include="*.{js,ts}" -l 2>/dev/null
-grep -rn "graphql\|apollo\|nexus\|pothos" --include="*.{js,ts}" -l 2>/dev/null
-grep -rn "openai\|anthropic\|langchain\|mistral\|ollama" --include="*.{js,ts}" -l 2>/dev/null
-grep -rn "fetch\|axios\|got\|node-fetch" --include="*.{js,ts}" -l 2>/dev/null
+grep -rn "mongoose\|prisma\|sequelize\|typeorm\|redis" --include="*.js" --include="*.ts" -l 2>/dev/null
+grep -rn "graphql\|apollo\|nexus\|pothos" --include="*.js" --include="*.ts" -l 2>/dev/null
+grep -rn "openai\|anthropic\|langchain\|mistral\|ollama" --include="*.js" --include="*.ts" -l 2>/dev/null
+grep -rn "fetch\|axios\|got\|node-fetch" --include="*.js" --include="*.ts" -l 2>/dev/null
 
 # PHP / Laravel / Symfony
 grep -rn "Illuminate\|Symfony\|Laravel\|Doctrine\|PDO\|mysqli" --include="*.php" -l 2>/dev/null
@@ -72,19 +72,19 @@ grep -E '"(react|vue|@angular/core|next|nuxt|@nuxtjs)' package.json 2>/dev/null 
 # Next.js - detect the presence of server code
 ls pages/api 2>/dev/null && echo "NEXTJS_PAGES_API_ROUTES"
 ls app/api 2>/dev/null && echo "NEXTJS_APP_API_ROUTES"
-grep -rln "getServerSideProps\|getStaticProps\|'use server'\|server-only" --include="*.{js,jsx,ts,tsx}" 2>/dev/null | head -10
+grep -rln "getServerSideProps\|getStaticProps\|'use server'\|server-only" --include="*.js" --include="*.jsx" --include="*.ts" --include="*.tsx" 2>/dev/null | head -10
 grep -rn "NEXT_PUBLIC_" .env* 2>/dev/null | grep -iE "secret|key|token|password|api" | head -10
 
 # Nuxt.js - detect server routes
 ls server/api server/routes 2>/dev/null | head -5
-grep -rln "defineEventHandler\|useServerApi\|serverApi" --include="*.{js,ts}" 2>/dev/null | head -5
+grep -rln "defineEventHandler\|useServerApi\|serverApi" --include="*.js" --include="*.ts" 2>/dev/null | head -5
 
 # Angular - is SSR enabled?
 grep -E '"@angular/ssr|@nguniversal' package.json 2>/dev/null
 
 # Secrets exposed client-side (all frameworks)
 grep -rn "REACT_APP_\|VUE_APP_\|VITE_\|NEXT_PUBLIC_" .env* 2>/dev/null | grep -iE "secret|key|token|password|api" | head -10
-grep -rln "localStorage\.setItem\|sessionStorage\.setItem" --include="*.{js,jsx,ts,tsx}" 2>/dev/null | head -5
+grep -rln "localStorage\.setItem\|sessionStorage\.setItem" --include="*.js" --include="*.jsx" --include="*.ts" --include="*.tsx" 2>/dev/null | head -5
 ```
 
 ### Role of JS frameworks: SSR vs CSR
@@ -153,7 +153,7 @@ Before the category-by-category analysis, check these high-impact patterns:
 | Native Python/Java deserialization  | A08.3         | `pickle.loads(\|ObjectInputStream\|BinaryFormatter`                      |
 | Mass assignment                     | A01.5         | `Object.assign(user, req.body)\|fill($request->all())`                   |
 
-> These patterns cover 80% of Critical findings. Identify them first, then analyze the remaining categories.
+> These patterns are high-yield starting points for Critical findings. Identify them first, then analyze the remaining categories.
 
 ---
 
@@ -184,10 +184,12 @@ cat /proc/1/cgroup 2>/dev/null | grep -qiE 'docker|podman|containerd' && echo "I
 ls Dockerfile Dockerfile.* docker-compose.yml docker-compose.yaml compose.yml compose.yaml .dockerignore 2>/dev/null
 ls -d .devcontainer 2>/dev/null && echo "DEVCONTAINER_PRESENT"
 
-# 3. Container CLI availability (prefer docker, then podman, then nerdctl)
-command -v docker >/dev/null && echo "CLI=docker"
-command -v podman >/dev/null && echo "CLI=podman"
-command -v nerdctl >/dev/null && echo "CLI=nerdctl"
+# 3. Container CLI availability — pick the first available in this order: docker > podman > nerdctl
+if command -v docker >/dev/null; then CLI=docker
+elif command -v podman >/dev/null; then CLI=podman
+elif command -v nerdctl >/dev/null; then CLI=nerdctl
+else CLI=none; fi
+echo "CLI=$CLI"
 
 # 4. Running containers / compose services (replace $CLI)
 $CLI ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" 2>/dev/null
@@ -304,7 +306,7 @@ Do you confirm? (yes / no / modify / switch to host|container)
 
 ## Step 3 - Loading the Sub-skills
 
-Each OWASP category has a dedicated sub-skill in `references/`. **Read the corresponding file before analyzing each category.**
+Each OWASP category has a dedicated reference guide in `references/`. **Read the corresponding file before analyzing each category.**
 
 | #   | OWASP Category                         | Reference File                                             |
 | --- | -------------------------------------- | ---------------------------------------------------------- |
@@ -321,8 +323,8 @@ Each OWASP category has a dedicated sub-skill in `references/`. **Read the corre
 
 **Recommended reading order:**
 
-- **Complete analysis** → read all sub-skills sequentially (A01 to A10)
-- **Targeted analysis** → read only the relevant sub-skill(s)
+- **Complete analysis** → read all reference guides sequentially (A01 to A10)
+- **Targeted analysis** → read only the relevant reference guide(s)
 - **Quick triage** → read A01, A02, A03 as a priority (the most frequently exploited categories)
 
 ### Analysis Orchestration
@@ -331,7 +333,7 @@ Announce progress at the start of each category:
 
 > `🔍 [X/10] Analyzing A0X - Category name...`
 
-**Modest-sized codebase (< 50 source files)** → sequential analysis: read the sub-skill, analyze the category, document the findings, then move on to the next one.
+**Modest-sized codebase (< 50 source files)** → sequential analysis: read the reference guide, analyze the category, document the findings, then move on to the next one.
 
 **Large codebase (> 50 source files)** → dispatch one sub-agent per OWASP category via the Agent tool:
 
@@ -347,8 +349,8 @@ Announce progress at the start of each category:
 
 For each OWASP category analyzed:
 
-1. Read the corresponding sub-skill (`references/A0X-*.md`)
-2. Apply the detection patterns defined in the sub-skill
+1. Read the corresponding reference guide (`references/A0X-*.md`)
+2. Apply the detection patterns defined in the reference guide
 3. If a dynamic check is relevant, follow the Step 2 protocol (Execution Context already resolved + per-command validation). Runtime commands must use `exec_prefix`.
 4. Classify each finding according to the severity grid below
 5. Document it according to the report format (Step 5)
@@ -375,7 +377,7 @@ Assign a confidence level to each finding to distinguish certainties from suspic
 
 ### Remediation Effort
 
-Estimate the cost of the fix to help prioritize by ROI:
+Estimate the cost of the fix to help prioritize high-impact, low-effort remediations:
 
 | Effort        | Meaning                                                               |
 | ------------- | --------------------------------------------------------------------- |
@@ -463,7 +465,7 @@ The overall security level is insufficient for public exposure."]
 - **Proof / Vulnerable example:**
   ```[language]
   // Vulnerable code or configuration (mask any real secret → [SECRET MASKED])
-````
+  ```
 
 - **Recommendation:** [Concrete, prioritized, and realistic action]
 - **Remediation example:**
@@ -476,7 +478,7 @@ The overall security level is insufficient for public exposure."]
 
 #### ⚡ Quick Wins - Fast, High-Impact Gains
 
-[List only Critical or High findings with Low or Medium effort, these are the priority fixes by ROI]
+[List only Critical or High findings with Low or Medium effort — the priority fixes]
 
 | ID            | Title           | Severity | Effort | Timeline  |
 | ------------- | --------------- | -------- | ------ | --------- |
@@ -525,20 +527,20 @@ Legend: ✅ Analyzed | ⏭️ Not analyzed (out of scope or insufficient context
 [Explicitly mention what could not be assessed, for example:]
 
 - Infrastructure and server configuration not provided → A05 partially assessed
-- Dependency files (package.json, pom.xml, etc.) missing → A06 not assessable
+- Dependency files (package.json, pom.xml, etc.) missing → A03 partially assessable / not assessable for CVE scanning
 - Dynamic tests (DAST) not possible in this context → some stored XSS vectors not statically detectable
 - Project dockerized but dynamic checks ran on host after user choice → runtime may differ from container (`host_vs_declared_diff=…`)
 - Container CLI unavailable / daemon down → runtime checks limited or host-only
 - Working directory inside container uncertain → some runtime checks may have used a fallback cwd
 - [Other context-specific limitations]
 
-```
+````
 
 ---
 
 ## Mandatory Behavior Rules
 
-- **The code examples in the sub-skills are illustrative**: the PHP, Nginx, JavaScript, Node.js, etc. snippets serve only to illustrate the *vulnerability pattern*, they do not define the scope of the analysis. Systematically transpose each pattern to the language and framework actually used in the audited project
+- **The code examples in the reference guides are illustrative**: the PHP, Nginx, JavaScript, Node.js, etc. snippets serve only to illustrate the _vulnerability pattern_, they do not define the scope of the analysis. Systematically transpose each pattern to the language and framework actually used in the audited project
 - **Never invent vulnerabilities**: if the context is insufficient, mark it "Not assessable" with an explanation
 - **Always justify the severity**: each level must be justified in one sentence
 - **Stay factual and actionable**: each finding must have a concrete and realistic recommendation
@@ -554,4 +556,3 @@ Legend: ✅ Analyzed | ⏭️ Not analyzed (out of scope or insufficient context
 - **Resolve Execution Context before runtime commands**: complete Step 2 before any `npm` / `node` / `pip` / `php` / `composer` / equivalent. Static `grep`/`find` on the workspace does not bypass this for runtime tools
 - **No silent host fallback on dockerized projects**: if containers are stopped, ask to start them or to test on the host; if the user picks host, warn on version mismatch and record it in Limitations
 - **Sub-agents inherit Execution Context**: when dispatching category sub-agents, always pass the Execution Context block; reject/ignore runtime commands that omit `exec_prefix` when `mode=docker-exec`
-```
