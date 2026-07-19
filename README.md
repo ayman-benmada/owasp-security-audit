@@ -106,7 +106,7 @@ This repository is both a plugin and its own Claude Code marketplace.
 
 ### Cursor
 
-Submit or install from the [Cursor Marketplace](https://cursor.com/marketplace).
+Install from the [Cursor Marketplace](https://cursor.com/marketplace).
 
 ## Usage
 
