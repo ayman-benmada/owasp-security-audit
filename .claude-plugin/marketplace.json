@@ -1,5 +1,6 @@
 {
   "name": "owasp-security-audit-marketplace",
+  "description": "Marketplace for the owasp-security-audit plugin, a Claude Code plugin that performs OWASP Top 10 (2025) application security audits.",
   "owner": {
     "name": "Ayman BENMADA"
   },
