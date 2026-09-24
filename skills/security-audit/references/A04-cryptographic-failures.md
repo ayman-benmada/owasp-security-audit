@@ -1,7 +1,9 @@
 # A04 - Cryptographic Failures
 
+**Examples are illustrative; transpose each pattern to the detected stack and verify that the relevant code runs in the claimed execution context.**
+
 **Reference framework:** OWASP Top 10 (2025), category A04
-**Key CWEs:** CWE-261, CWE-319, CWE-320, CWE-321, CWE-323, CWE-326, CWE-327, CWE-328, CWE-330, CWE-331, CWE-338, CWE-347, CWE-523, CWE-757, CWE-759, CWE-916
+**Key CWEs:** CWE-261, CWE-319, CWE-321, CWE-323, CWE-326, CWE-327, CWE-328, CWE-330, CWE-331, CWE-338, CWE-347, CWE-523, CWE-757, CWE-759, CWE-916
 **Finding format:** `OWASP-A04-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A04. It provides detection patterns, standard fixes, and the severity grid specific to cryptographic failures.
@@ -228,7 +230,7 @@ const resetToken = crypto.randomBytes(32).toString("hex"); // 256 bits
 
 ### A04.5 - Hardcoded Cryptographic Keys and Signing Secrets
 
-**CWE-321** - Use of Hard-coded Cryptographic Key | related: CWE-798 Use of Hard-coded Credentials
+**CWE-321** - Use of Hard-coded Cryptographic Key
 
 **Pattern:** encryption keys, JWT secrets, API tokens, or database passwords present directly in the source code or in versioned files. Once committed to Git, these secrets are **permanently compromised**: the history is not erased by a simple deletion commit.
 
@@ -260,13 +262,13 @@ if (!jwtSecret) throw new Error("JWT_SECRET is not defined");
 
 ### A04.6 - Disabled TLS or Signature Validation
 
-**CWE-347** - Improper Verification of Cryptographic Signature | **CWE-757** - Selection of Less-Secure Algorithm During Negotiation | **CWE-295** - Improper Certificate Validation
+**CWE-347** - Improper Verification of Cryptographic Signature | **CWE-757** - Selection of Less-Secure Algorithm During Negotiation
 
-**Pattern:** verification of a peer's authenticity (TLS certificate) or of a token's authenticity (JWT signature) is disabled or can be bypassed, nullifying the cryptographic guarantees of the channel or mechanism.
+**Pattern:** verification of a token's cryptographic signature is disabled or can be bypassed. A disabled TLS peer-certificate check is an authentication failure; route that finding to A07 using its mapped weakness.
 
 **Detection: look for**
 
-**TLS validation disabled:**
+**TLS validation disabled (route the concrete finding to A07):**
 
 ```javascript
 // ❌ Node.js - disables server certificate verification
@@ -288,8 +290,8 @@ requests.get(url, verify=False)
 **Incorrect JWT validation:**
 
 ```javascript
-// ❌ "none" algorithm accepted - token without a valid signature
-const payload = jwt.verify(token, secret); // if the library accepts alg:none by default
+// ❌ Decoding alone does not verify the signature
+const payload = jwt.decode(token);
 
 // ❌ Algorithm determined by the token's header (attacker-controlled)
 const { alg } = jwt.decode(token, { complete: true }).header;
@@ -307,6 +309,8 @@ const payload = jwt.verify(token, process.env.JWT_SECRET, {
 });
 ```
 
+Check the installed `jsonwebtoken` version and the actual `verify` options. Current versions do not accept unsigned tokens by default. The `exp` and `nbf` checks are automatic unless explicitly disabled; issuer and audience require expected values. Do not label a bare `jwt.verify(token, secret)` call as an unsigned-token bypass.
+
 **Other patterns to look for:**
 
 - Self-signed certificates accepted in production without certificate pinning.
@@ -319,7 +323,7 @@ const payload = jwt.verify(token, process.env.JWT_SECRET, {
 
 ### A04.7 - Poor Cryptographic Key Management
 
-**CWE-320** - Key Management Errors | **CWE-323** - Reusing a Nonce, Key Pair in Encryption
+**CWE-323** - Reusing a Nonce, Key Pair in Encryption
 
 **Pattern:** cryptographic keys are not rotated, are stored with insufficient protection, or the architecture does not allow rotation without massive re-encryption of data.
 
@@ -392,7 +396,7 @@ This model makes it possible to:
 | Passwords in cleartext or hashed with MD5/SHA-\* without a salt, JWT secret hardcoded in production, TLS disabled on an HTTP client, JWT with no signature verification or with `none` accepted, IV reused in AES-GCM, weak PRNG for a reset/session token | 🔴 Critical      |
 | Obsolete algorithm (DES, RC4, 3DES) on sensitive data, bcrypt with a very low cost (< 8), single key without rotation encrypting all data, absence of HSTS on an app handling credentials, weak PRNG for a short-lived value                                   | 🟠 High          |
 | MD5/SHA-1 for non-critical integrity verification, TLS 1.1 still accepted, absence of documented key rotation, architecture without DEK/KEK on moderately sensitive data                                                                                   | 🟡 Medium        |
-| SHA-256 used where Argon2id would be preferable but without compromised production data, absence of crypto-agility on a non-critical system                                                                                                                | 🟢 Low           |
+| Absence of crypto-agility on a non-critical system with no demonstrated exposure                                                                                                               | 🟢 Low           |
 | Absence of a post-quantum migration path for long-lived sensitive data, correct algorithm but not the recommended first choice                                                                                                                              | ℹ️ Informational |
 
 ---
@@ -412,7 +416,7 @@ This model makes it possible to:
 
 ## Finding template for the report
 
-Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
+Use the finding block defined in `references/report-format.md`. Category-specific fields:
 
 - **Sub-type:** A04.X - [sub-type name]
 - **Severity justification:** [1 sentence; specify the sensitivity of the data involved]

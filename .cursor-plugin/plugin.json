@@ -1,7 +1,7 @@
 {
   "name": "owasp-security-audit",
   "version": "1.0.0",
-  "description": "Audits your codebase against the OWASP Top 10:2025 and produces a prioritized security report. Adapts to your stack, rates severity and confidence separately, masks secrets, and asks before running any command.",
+  "description": "Audits your codebase against the OWASP Top 10:2025 and produces an evidence-backed security report. Detects the actual stack and execution context, rates severity and confidence separately, masks secrets, and asks before running project or third-party code.",
   "author": {
     "name": "Ayman BENMADA"
   },

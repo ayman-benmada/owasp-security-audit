@@ -1,5 +1,7 @@
 # A10 - Mishandling of Exceptional Conditions
 
+Examples are illustrative; transpose them to the detected stack and the execution context of the actual code before reporting a finding.
+
 **Reference framework:** OWASP Top 10 (2025) - category A10
 **Key CWEs:** CWE-209, CWE-248, CWE-252, CWE-280, CWE-390, CWE-391, CWE-396, CWE-397, CWE-460, CWE-476, CWE-478, CWE-484, CWE-636, CWE-754, CWE-755, CWE-756
 **Finding format:** `OWASP-A10-NNN`
@@ -295,7 +297,7 @@ try {
 
 ### A10.5 - Resources not released after an exception (resource leak)
 
-**CWE-460** - Improper Cleanup on Thrown Exception | **CWE-772** - Missing Release of Resource after Effective Lifetime
+**CWE-460** - Improper Cleanup on Thrown Exception
 
 **Pattern:** a resource (file, database connection, network handle, stream) is opened and not released if an exception occurs before the `fclose()`/`close()`/`disconnect()` call. Repeated across many requests, this progressively exhausts the server's available descriptors, causing a denial of service.
 
@@ -537,7 +539,7 @@ server {
 
 ## Finding template for the report
 
-Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
+Use the finding block defined in `references/report-format.md`. Category-specific fields:
 
 - **Sub-type:** A10.X - [sub-type name]
 - **Severity justification:** [1 sentence; specify which logic is affected by the mishandled condition (security control, transaction, resource)]

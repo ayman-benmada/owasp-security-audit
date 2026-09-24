@@ -6,8 +6,8 @@ It is a first-pass review, not a replacement for a penetration test or a dedicat
 
 ## What it does
 
-- **Loads one reference guide per OWASP category** (A01 to A10), each with detection patterns, false-positive checks, severity guidance, and remediation examples.
-- **Detects the stack first** (languages, frameworks, ORM, GraphQL, LLM integrations, containers) and applies server-side rules only to code that actually runs on a server. React/Vue/Angular code that runs only in the browser is not checked for SQL injection or SSRF; Next.js API routes, Server Actions, Nuxt server routes, and serverless functions are treated as backend code.
+- **Loads the relevant OWASP category guides** (A01 to A10), each with detection patterns, false-positive checks, severity guidance, and illustrative remediation examples.
+- **Detects the stack first** (languages, frameworks, ORM, GraphQL, containers) and applies server-side rules only to code that actually runs on a server. React/Vue/Angular code that runs only in the browser is not checked for SQL injection or SSRF; Next.js API routes, Server Actions, Nuxt server routes, and serverless functions are treated as backend code.
 - **Separates severity from confidence.** Severity rates the impact if the finding is real; confidence rates how well the code evidence supports it (🔵 traced source-to-sink, 🟣 likely but partly not visible, ⚪ pattern only, marked `[MANUAL VERIFICATION REQUIRED]`).
 - **Requires evidence for every finding**: file and line, code excerpt, source-to-sink path for data-flow issues, reachable entry point, impact, and a concrete fix.
 - **Reports what it could not assess** (business logic, deployed configuration, cloud IAM, runtime behavior) instead of marking those areas as clean.
@@ -34,13 +34,11 @@ It is a first-pass review, not a replacement for a penetration test or a dedicat
 | A09 | Security Logging and Alerting Failures | [A09-security-logging-and-alerting-failures.md](skills/security-audit/references/A09-security-logging-and-alerting-failures.md) |
 | A10 | Mishandling of Exceptional Conditions  | [A10-mishandling-of-exceptional-conditions.md](skills/security-audit/references/A10-mishandling-of-exceptional-conditions.md) |
 
-Prompt injection in applications that embed an LLM is also checked (A05.12).
-
 ## Report
 
-The report contains an executive summary, a summary table by severity with a confidence breakdown, findings grouped by category (ID `OWASP-A0X-NNN`, CWE, severity and justification, confidence, effort, location, evidence, impact, fix, manual verification steps when needed), quick wins, a prioritized remediation plan, a coverage table, and a limitations section.
+The report contains an executive summary, findings grouped by category (ID `OWASP-A0X-NNN`, mapped CWE when applicable, severity and justification, confidence, location, evidence, impact, fix, and manual verification steps when needed), a coverage table, and limitations.
 
-Three levels of detail are available (executive, technical, exhaustive), in English (default), French, or Spanish.
+The default report language is English. You can request a different language or level of detail.
 
 ## Installation
 
@@ -62,10 +60,12 @@ claude --plugin-dir ./owasp-security-audit
 
 ### Cursor
 
-Install it as a local plugin:
+Install the skill in Cursor's documented user skill directory:
 
 ```bash
-git clone https://github.com/ayman-benmada/owasp-security-audit.git ~/.cursor/plugins/local/owasp-security-audit
+git clone https://github.com/ayman-benmada/owasp-security-audit.git
+mkdir -p ~/.cursor/skills
+cp -R owasp-security-audit/skills/security-audit ~/.cursor/skills/security-audit
 ```
 
 Then restart Cursor or run **Developer: Reload Window**.
@@ -81,7 +81,7 @@ Example request:
 
 > Run a security audit of this Node.js/Express repository, technical level, report in English.
 
-The skill may ask up to four questions first (target, stack, scope, report level and language) if they cannot be inferred.
+The skill may ask a focused question when the target or scope cannot be inferred.
 
 ## Limitations
 
@@ -102,8 +102,9 @@ assets/
 └── logo.png
 skills/
 └── security-audit/        # Shared skill (Claude Code + Cursor)
-    ├── SKILL.md           # Orchestrator: operating rules, steps, report format
-    └── references/        # One guide per OWASP Top 10:2025 category (A01 to A10)
+    ├── SKILL.md           # Operating rules, stack checks, and category routing
+    ├── references/        # Category guides, runtime checks, and report format
+    └── evals/             # Behavioral scenarios and expected results
 ```
 
 ## License

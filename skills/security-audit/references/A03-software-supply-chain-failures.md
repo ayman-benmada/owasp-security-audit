@@ -1,5 +1,7 @@
 # A03: Software Supply Chain Failures
 
+**Examples are illustrative; transpose each pattern to the detected stack and verify that the relevant code runs in the claimed execution context.**
+
 **Reference:** OWASP Top 10 (2025), category A03
 **Key CWEs:** CWE-1104, CWE-1329, CWE-1357, CWE-1395
 **Finding format:** `OWASP-A03-NNN`
@@ -49,7 +51,7 @@ A03 covers very different surfaces: application dependencies, the CI/CD pipeline
 - **CI/CD pipeline**: `.github/workflows/*.yml`, `.gitlab-ci.yml`, `Jenkinsfile`, build scripts.
 - **Container configuration**: `Dockerfile`, `.dockerignore`, registry configuration.
 - **Build tools**: Webpack/Vite configuration, `postinstall` scripts, npm hooks.
-- **SBOM and signatures**: presence/absence of `sbom.json`, cosign/sigstore configuration.
+- **SBOM and signatures**: presence or absence of an artifact inventory and signature verification policy.
 
 If a surface is not provided, note it in the "Limitations" section of the report.
 
@@ -103,15 +105,15 @@ A03 contains many findings that are **organizational weaknesses** (no lockfile, 
 - Absence of a lockfile (`package-lock.json`, `composer.lock`, `Pipfile.lock`, `go.sum`): without a lockfile, the transitive tree is not fixed.
 - No SBOM generated during the build.
 - Pipeline using `npm install` instead of `npm ci` (does not guarantee reproducibility of the dependency tree).
-- No software composition analysis tool (Grype, Dependabot, Snyk) configured.
+- No dependency-vulnerability monitoring visible in the provided build and deployment scope.
 
-**Typical severity:** 🟡 Medium to 🟠 High (depending on the depth and potential criticality of the unaudited dependencies).
+**Typical severity:** Informational or Low without a demonstrated vulnerable dependency or exploitable build path. Record missing visibility as a limitation when pipeline and inventory information are unavailable.
 
 ---
 
 ### A03.3: Unpinned Versions (Floating Dependencies)
 
-**CWE-1357**: Reliance on Insufficiently Trustworthy Component | related: CWE-494 Download of Code Without Integrity Check
+**CWE-1357**: Reliance on Insufficiently Trustworthy Component
 
 **Pattern:** dependencies are declared with flexible version operators (`^`, `~`, `latest`, `*`), allowing a different version, potentially malicious or vulnerable, to be installed on every build without any visible change to the source code.
 
@@ -139,7 +141,7 @@ A03 contains many findings that are **organizational weaknesses** (no lockfile, 
 }
 ```
 
-**Important point:** pinning versions in `package.json` is not enough. Reproducibility relies on the lockfile, which captures the complete tree along with checksums. In CI, it is essential to use `npm ci` (which fails if `package-lock.json` is missing or inconsistent) rather than `npm install`.
+**Important point:** pinning versions in `package.json` is not enough. A lockfile records the resolved dependency tree; check the actual package manager and lockfile format for integrity metadata. For npm projects with a lockfile, `npm ci` fails if the lockfile is missing or inconsistent with the manifest and avoids updating it. This improves reproducibility, but does not prove that every artifact or install script is safe.
 
 ```bash
 # ❌ Vulnerable CI
@@ -151,7 +153,7 @@ npm ci
 
 **Equivalents:** `composer install --no-dev` (PHP), `pip install -r requirements.txt` with `pip-compile` (Python), `go mod download` with a verified `go.sum` (Go).
 
-**Typical severity:** 🟡 Medium (structural risk) to 🟠 High if `latest` is used on a high-impact dependency.
+**Typical severity:** Low to Medium when the effective build is unpinned. A present, enforced lockfile can eliminate the asserted floating-version path.
 
 ---
 
@@ -165,33 +167,11 @@ npm ci
 
 - Absence of an `sbom.json` or `sbom.xml` file among the artifacts or in the pipeline.
 - No SBOM generation step in the CI/CD.
-- No cosign or sigstore attestation associated with the Docker images.
+- No artifact identity or integrity verification visible in the deployment path.
 
-**Recommended workflow (npm + Docker):**
+**Recommended workflow:** generate an inventory from the final artifact, associate it with the artifact identity, and verify both before deployment. Choose tooling only after checking the project's actual CI platform and the tool's current official documentation. Any build, scanner, signing, or network command requires the user approval described in the main skill.
 
-```bash
-# 1. Resolve dependencies
-npm ci
-
-# 2. Build the image
-docker build -t myapp:1.2.3 .
-
-# 3. Generate the SBOM on the final image (not on the source folder)
-syft myapp:1.2.3 -o cyclonedx-json > sbom.json
-
-# 4. Sign the image and attach the SBOM
-cosign sign --yes myapp:1.2.3
-cosign attest --predicate sbom.json --type cyclonedx myapp:1.2.3
-
-# 5. Verify the signature at deployment (with identity restriction)
-cosign verify myapp:1.2.3 \
-  --certificate-identity-regexp "https://github.com/myorg/myrepo/.*" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
-```
-
-**Critical point about verification:** `cosign verify` without `--certificate-identity-regexp` is insufficient: it only verifies that a valid signature exists, not that it originates from this pipeline. Anyone could sign the image with their own credentials.
-
-**Typical severity:** 🟢 Low (absence alone) to 🟠 High if combined with the absence of vulnerability scanning and signing.
+**Typical severity:** Informational to Low for absence alone. Raise severity only for a distinct, evidence-backed integrity or vulnerability-management failure.
 
 ---
 
@@ -203,42 +183,19 @@ cosign verify myapp:1.2.3 \
 
 **Detection, look for:**
 
-- Absence of an `npm audit`, `composer audit`, Grype, or Snyk step in the CI pipeline.
-- Absence of Dependabot, Renovate, or Dependency-Track configured.
+- No dependency vulnerability check visible in the complete CI pipeline.
+- No monitoring for new advisories against deployed dependency versions visible in the provided scope.
 - A build that passes despite high-severity `npm audit` findings.
 
-**Recommended combination:**
+**Recommended combination:** check known vulnerabilities at build time and monitor deployed versions for newly published advisories. Verify that a scanner is absent from the whole pipeline before calling it a gap. Do not query an external database without the user's approval.
 
-```yaml
-# GitHub Actions - block in CI with Grype
-- name: Scan vulnerabilities
-  uses: anchore/scan-action@v3
-  with:
-    sbom: sbom.json
-    fail-build: true
-    severity-cutoff: high
-```
-
-```bash
-# Or via the command line
-grype sbom:./sbom.json --fail-on high
-
-# Send the SBOM to Dependency-Track for continuous monitoring
-curl -X PUT https://dtrack.internal.example.com/api/v1/bom \
-  -H "X-Api-Key: $DT_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d "{\"project\": \"uuid\", \"bom\": \"$(base64 -w 0 sbom.json)\"}"
-```
-
-**Complementary logic:** Grype blocks in CI on CVEs known at build time. Dependency-Track alerts on CVEs published after deployment. Both use the same `sbom.json`.
-
-**Typical severity:** 🟡 Medium (no CI scanning) to 🟠 High (no post-deployment monitoring on a publicly exposed app).
+**Typical severity:** Informational to Medium depending on a documented vulnerability-management requirement and the visibility of external monitoring. Absence of a scanner call in one repository is not proof that no scanning exists.
 
 ---
 
 ### A03.6: Insufficiently Secured CI/CD Pipeline
 
-**CWE-1357**: Reliance on Insufficiently Trustworthy Component | related: CWE-829, CWE-732
+**CWE-1357**: Reliance on Insufficiently Trustworthy Component
 
 **Pattern:** the pipeline has privileged access (secrets, registries, production environments) but is secured with less rigor than the application itself. A compromised pipeline can modify artifacts, exfiltrate secrets, or deploy malicious code while bypassing every application-level control.
 
@@ -295,7 +252,7 @@ jobs:
 
 ### A03.7: Compromise via Typosquatting
 
-**CWE-1357**: Reliance on Insufficiently Trustworthy Component | related: CWE-506 Embedded Malicious Code
+**CWE-1357**: Reliance on Insufficiently Trustworthy Component
 
 **Pattern:** an attacker publishes a package whose name imitates a legitimate library (e.g., `lodahs` instead of `lodash`, `expres` instead of `express`). A typo when declaring a dependency silently installs the malicious package.
 
@@ -310,7 +267,7 @@ jobs:
 
 - Carefully verify package names before declaring any dependency.
 - Use an internal proxy registry that only allows approved packages.
-- Regularly review dependencies' install scripts (`npm query ":attr(scripts, [postinstall])"` lists them); install with `--ignore-scripts` where compatible. Note that `npm audit` only reports known advisories, it does not inspect install scripts.
+- Regularly review dependencies' install scripts; use install-time script restrictions where compatible. Note that `npm audit` only reports known advisories, it does not inspect install scripts.
 
 **Typical severity:** 🔴 Critical (arbitrary code execution upon installation).
 
@@ -348,16 +305,16 @@ jobs:
 
 **Standard fix:** define and maintain an allowlist of validated extensions, restrict installation to official sources, include IDE extensions within the security audit scope, and apply security updates.
 
-**Typical severity:** 🟡 Medium to 🟠 High (depending on the extension's permissions and the sensitivity of the development environment).
+**Typical severity:** Informational unless a specific extension, distribution path, privilege, and exposure are evidenced.
 
 ---
 
 ## Cross-cutting Remediation Rules
 
-1. **Pin + lockfile + `npm ci`**: fixed versions in the manifest, the complete tree captured in the lockfile, `npm ci` in CI to guarantee reproducibility.
+1. **Pin + lockfile + frozen install**: use the package manager's documented frozen install mode for the actual project; for npm projects, `npm ci` uses the existing lockfile without updating it.
 2. **SBOM generated on the final artifact**: after dependency resolution and after the Docker build, not on the source folder.
-3. **Sign and verify with identity restriction**: `cosign verify` with `--certificate-identity-regexp` to guarantee that the signature originates from this specific pipeline.
-4. **Grype in CI + Dependency-Track continuously**: block on known CVEs at build time, alert on new CVEs after deployment. Both rely on the same SBOM.
+3. **Sign and verify with identity restriction**: verify the signature and the identity of the expected build pipeline before deployment, using tooling documented for the actual platform.
+4. **Scan and monitor**: check known CVEs at build time and monitor deployed component versions for newly published advisories.
 5. **Minimal permissions in the pipeline**: `permissions: contents: read` by default, extended only as strictly needed. Third-party actions pinned by hash.
 6. **Segmented secrets**: repository secrets for non-critical uses, environment secrets with approval for production.
 7. **Separation of duties**: protected main branch (mandatory PR plus review), "required reviewers" on sensitive environments.
@@ -371,11 +328,11 @@ jobs:
 
 | Finding criteria                                                                                                                                                                          | Severity         |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| Critical, remotely exploitable CVE on a production dependency; confirmed typosquatting; pipeline with unsecured production access; maintainer account takeover                            | 🔴 Critical      |
-| High CVE on an exposed dependency; pipeline lacking minimal permissions with access to secrets; total absence of CI scanning on a publicly exposed app; missing SBOM with no verification | 🟠 High          |
-| Floating versions on critical dependencies; unaudited transitive dependencies; unmaintained component with no alternative; IDE extensions with no policy                                  | 🟡 Medium        |
-| Absence of an SBOM alone (with no other gap); lockfile present but `npm install` used in CI; missing post-deployment monitoring on a non-critical app                                     | 🟢 Low           |
-| Absence of IaC for the pipeline; no proxy registry (with no other gap); missing documentation of an accepted risk                                                                         | ℹ️ Informational |
+| Verified remotely exploitable vulnerability in a reachable production dependency with severe impact, or confirmed code substitution in a privileged build | 🔴 Critical |
+| Verified applicable high-impact vulnerability in a reachable component; attacker-controlled pipeline step with access to sensitive assets | 🟠 High |
+| Confirmed reachable vulnerable component with limited impact, or a concrete supply chain weakness with a demonstrated substitution path and limited privileges | 🟡 Medium |
+| Absence of an SBOM alone; lockfile present but `npm install` used in CI; missing post-deployment monitoring without a demonstrated exposure | Investigate; do not assign severity yet |
+| Absence of IaC, a proxy registry, or documentation with no demonstrated exposure | Informational observation only |
 
 ---
 
@@ -393,7 +350,7 @@ jobs:
 
 ## Finding template for the report
 
-Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
+Use the finding block defined in `references/report-format.md`. Category-specific fields:
 
 - **Sub-type:** A03.X - [sub-type name]
 - **Severity justification:** [1 sentence; specify whether the affected component or pipeline step actually reaches production or has access to secrets]
@@ -405,9 +362,9 @@ Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
 A03 is particularly dependent on the state of the runtime and of external systems:
 
-- **CVEs on dependencies**: requires an active scan (`npm audit`, Grype) against up-to-date databases; a static analysis of `package.json` without querying a vulnerability database cannot conclusively determine the presence of a CVE.
+- **CVEs on dependencies**: requires an active check against up-to-date databases; a static analysis of `package.json` without querying a vulnerability database cannot conclusively determine the presence of a CVE.
 - **Typosquatting**: visually detectable from suspicious names, but a thorough verification requires querying the npm registry (download count, creation date, maintainer).
-- **Maintainer compromise**: not statically detectable; requires continuous monitoring (Dependency-Track, GitHub Advisory alerts).
+- **Maintainer compromise**: not statically detectable; requires monitoring and provenance review beyond the provided source files.
 - **Actual content of artifacts**: a `Dockerfile` without a `.dockerignore` is a signal, but only `docker image inspect` on the built image confirms what is actually embedded.
 - **Effective pipeline permissions**: workflow files declare the requested permissions, but the secrets actually accessible depend on the organization's GitHub/GitLab configuration.
 

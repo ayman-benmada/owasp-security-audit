@@ -1,7 +1,9 @@
 # A07: Authentication Failures
 
+**Examples are illustrative; transpose each pattern to the detected stack and verify that the relevant code runs in the claimed execution context.**
+
 **Reference:** OWASP Top 10 (2025), category A07
-**Key CWEs:** CWE-259, CWE-287, CWE-295, CWE-306, CWE-307, CWE-308, CWE-346, CWE-384, CWE-521, CWE-613, CWE-620, CWE-640, CWE-798, CWE-1390, CWE-1391
+**Key CWEs:** CWE-259, CWE-287, CWE-295, CWE-306, CWE-307, CWE-308, CWE-346, CWE-384, CWE-521, CWE-613, CWE-620, CWE-640, CWE-798, CWE-1390, CWE-1391, CWE-1392
 **Finding format:** `OWASP-A07-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A07. It provides detection patterns, standard fixes, and the severity grid specific to authentication failures.
@@ -174,7 +176,7 @@ public function login(Request $request)
 
 ### A07.3: Account Enumeration
 
-**CWE-204**: Observable Response Discrepancy | **CWE-208**: Observable Timing Discrepancy
+**Mapping note:** account enumeration is an authentication lead. Use a specific A07 mapped CWE only when a concrete authentication weakness is established; do not assign an unrelated CWE just because responses differ.
 
 **Pattern:** the application reveals to an attacker whether an account exists through differentiated error messages ("Unknown user" vs. "Incorrect password") or through distinct response times (short-circuiting before the hash is computed if the user does not exist).
 
@@ -198,11 +200,11 @@ const valid = await bcrypt.compare(password, user.passwordHash);
 
 ```javascript
 // Good: identical message + hash computed even if the user does not exist
-const DUMMY_HASH = "$2b$10$..."; // pre-computed valid hash of a dummy password
+const DUMMY_HASH = bcrypt.hashSync("invalid-account-placeholder", 10); // initialize once
 const user = await db.findUserByEmail(email);
 const hashToCheck = user ? user.passwordHash : DUMMY_HASH;
 
-// The hash is always computed, even if user is null -> identical timing
+// Hash work also occurs if the user is absent; measure residual timing differences
 const valid = await bcrypt.compare(password, hashToCheck);
 
 if (!user || !valid) {
@@ -222,7 +224,7 @@ if (!user || !valid) {
 
 ### A07.4: Inadequate Password Storage
 
-**CWE-916**: Use of Password Hash With Insufficient Computational Effort | **CWE-256**: Plaintext Storage of a Password
+**Routing note:** report weak hashing under A04.3 and plaintext storage by design under A06.5. Do not duplicate the same storage flaw here.
 
 **Pattern:** passwords stored in plaintext, reversibly encrypted, or hashed with a fast algorithm (MD5, SHA-1, SHA-256) with or without a salt. This subtype overlaps with A04.3: report it once, under A04.3 (weak hashing) or A06.5 (reversible storage by design), and add `→ See also A07.4` here.
 
@@ -368,15 +370,15 @@ Route::prefix('admin')
 | Email OTP                                  | ❌ Weak             | Depends on email account security |
 | Secret questions                           | ❌ Very weak        | See A06.3                         |
 
-**Typical severity:** 🟠 High (MFA absent on a standard account) to 🔴 Critical (MFA absent on an admin or financial account, bypassable fallback).
+**Typical severity:** Determine from the account privileges, policy requirement, available fallback, and demonstrated attack path. Missing MFA alone is a lead; an exploitable bypass protecting a sensitive action can be High or Critical when the impact supports it.
 
 ---
 
 ### A07.8: Incorrect JWT Validation
 
-**CWE-287**: Improper Authentication | related: CWE-347 Improper Verification of Cryptographic Signature, CWE-345
+**CWE-287**: Improper Authentication
 
-**Pattern:** a JWT is partially validated (signature checked but functional claims ignored) or not validated at all. This subtype overlaps with A04.6: report a missing or bypassable signature check once under A04.6, and missing claim validation (`exp`, `iss`, `aud`) here.
+**Pattern:** a JWT is partially validated (signature checked but required identity or authorization claims ignored) or not validated at all. This subtype overlaps with A04.6: report a missing or bypassable signature check once under A04.6, and missing required claim validation here. Check the library and version: `jsonwebtoken.verify` checks `exp` and `nbf` by default, while expected `iss` and `aud` require options.
 
 **Detection - look for:**
 
@@ -384,8 +386,8 @@ Route::prefix('admin')
 // Bad: jwt.decode() with no signature verification
 const payload = jwt.decode(token); // decodes without validating
 
-// Bad: functional claims ignored
-const payload = jwt.verify(token, secret); // signature OK but exp/iss/aud not checked
+// Investigate whether this endpoint requires an expected issuer and audience:
+const payload = jwt.verify(token, secret); // signature and exp/nbf checked by default
 ```
 
 **Claims to validate systematically:**
@@ -482,7 +484,7 @@ private string $password;
 
 ### A07.11: OAuth 2.0 / OIDC Vulnerabilities
 
-**CWE-346**: Origin Validation Error | **CWE-287**: Improper Authentication | related: CWE-601 URL Redirection to Untrusted Site
+**CWE-346**: Origin Validation Error | **CWE-287**: Improper Authentication
 
 **Pattern:** OAuth 2.0 and OIDC are complex protocols with many implementation points. The most frequent errors involve the absence of the `state` parameter (OAuth CSRF), the absence of PKCE (authorization code interception), lax validation of redirect URIs (open redirect), and failure to validate `id_token` claims.
 
@@ -676,11 +678,13 @@ const authUrl = buildAuthUrl({
 
 | Finding criteria                                                                                                                                                                                                                                                                                                                                | Severity         |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| Default credentials active in production, login endpoint with no brute-force protection whatsoever on a public app, auth bypass on an admin route, JWT accepted with no signature verification, session ID in the URL on sensitive data, bypassable MFA, OAuth open redirect leading to account takeover, client_secret exposed on the frontend | 🔴 Critical      |
-| MFA absent on admin accounts, session not invalidated on logout, session fixation possible, lockout based solely on IP, MFA fallback via SMS only, PKCE absent on a public app, OIDC id_token not verified                                                                                                                                      | 🟠 High          |
+| Demonstrated auth bypass on a privileged route, account takeover through a verified token or recovery flaw, or bypassable MFA protecting high-impact actions | 🔴 Critical |
+| Verified session fixation, privileged session remaining usable after logout, or authentication flow bypass with material impact | 🟠 High |
 | Account enumeration, no re-authentication for sensitive actions, insufficient password policy combined with absence of MFA, sessions with no reasonable expiration, OAuth state absent, implicit flow still in use, overly broad OAuth scope                                                                                                    | 🟡 Medium        |
-| Account enumeration alone (with no other vector), slightly insufficient length policy with active MFA, OIDC nonce absent with no confirmed replay                                                                                                                                                                                               | 🟢 Low           |
-| No verification of compromised passwords with an otherwise correct policy, session rotation absent on a non-sensitive app, refresh token rotation absent with a short lifetime                                                                                                                                                                  | ℹ️ Informational |
+| Account enumeration alone with limited impact, or an authentication policy deviation with a demonstrated but small impact | 🟢 Low |
+| No verification of compromised passwords with an otherwise correct policy, session rotation absent on a non-sensitive app, refresh token rotation absent with a short lifetime | ℹ️ Informational |
+
+Missing MFA, PKCE, rate limiting, or a nonce is a lead until the deployed flow, compensating controls, attacker access, and impact have been established. Do not infer production exposure from a missing local middleware call.
 
 ---
 
@@ -699,7 +703,7 @@ const authUrl = buildAuthUrl({
 
 ## Finding template for the report
 
-Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
+Use the finding block defined in `references/report-format.md`. Category-specific fields:
 
 - **Sub-type:** A07.X - [sub-type name]
 - **Severity justification:** [1 sentence; specify the impact on the authentication chain (who can authenticate as whom)]

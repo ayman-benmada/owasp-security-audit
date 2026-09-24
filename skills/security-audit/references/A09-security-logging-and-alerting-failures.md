@@ -1,5 +1,7 @@
 # A09 - Security Logging and Alerting Failures
 
+Examples are illustrative; transpose them to the detected stack and the execution context of the actual code before reporting a finding.
+
 **Reference:** OWASP Top 10 (2025), category A09
 **Key CWEs:** CWE-117, CWE-221, CWE-223, CWE-532, CWE-778
 **Finding format:** `OWASP-A09-NNN`
@@ -277,7 +279,7 @@ function sanitizeLogValue(value) {
 
 ### A09.4 - Uncaught exceptions
 
-**CWE-778** - Insufficient Logging | related: CWE-390 Detection of Error Condition Without Action
+**CWE-778** - Insufficient Logging
 
 > **Deduplication:** this sub-type covers the missing *log entry*. If the exception handling itself is flawed (fail open, swallowed error, missing rollback), report under A10 and add `→ See also A09.4`.
 
@@ -441,7 +443,7 @@ The events below are classified `CRITICAL` in the [OWASP Logging Vocabulary Chea
 
 ## Finding template for the report
 
-Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
+Use the finding block defined in `references/report-format.md`. Category-specific fields:
 
 - **Sub-type:** A09.X - [sub-type name]
 - **Severity justification:** [1 sentence; specify the impact on detection, alerting, or investigation capability]

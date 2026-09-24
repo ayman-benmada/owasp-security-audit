@@ -1,5 +1,7 @@
 # A01 - Broken Access Control
 
+**Examples are illustrative; transpose each pattern to the detected stack and verify that the relevant code runs in the claimed execution context.**
+
 **Reference framework:** OWASP Top 10 (2025), category A01
 **Key CWEs:** CWE-22, CWE-200, CWE-284, CWE-285, CWE-352, CWE-601, CWE-639, CWE-732, CWE-862, CWE-863, CWE-918, CWE-1275
 **Finding format:** `OWASP-A01-NNN`
@@ -122,7 +124,7 @@ app.get("/api/orders/:orderId", requireAuth, async (req, res) => {
 
 ### A01.3 - Client-side-only access control
 
-**CWE-862** - Missing Authorization | related: CWE-602 Client-Side Enforcement of Server-Side Security
+**CWE-862** - Missing Authorization
 
 **Pattern:** the authorization decision is made in the browser (hiding buttons, JS checks) with no server-side counterpart.
 
@@ -162,7 +164,7 @@ app.post("/api/users/:id/role", requireAuth, async (req, res) => {
 
 ### A01.4 - HTTP methods not protected uniformly
 
-**CWE-862** - Missing Authorization | **CWE-650** - Trusting HTTP Permission Methods on the Server Side
+**CWE-862** - Missing Authorization
 
 **Pattern:** `GET` is protected but `DELETE` or `PUT` on the same URL is not.
 
@@ -178,7 +180,7 @@ app.post("/api/users/:id/role", requireAuth, async (req, res) => {
 
 ### A01.5 - Vertical privilege escalation
 
-**CWE-863** - Incorrect Authorization | related: CWE-269 Improper Privilege Management, CWE-915 Mass Assignment
+**CWE-863** - Incorrect Authorization
 
 **Pattern:** a user obtains rights higher than those they were granted, generally because sensitive information (role, permissions) is modifiable client-side.
 
@@ -186,7 +188,7 @@ app.post("/api/users/:id/role", requireAuth, async (req, res) => {
 
 - Registration or profile update endpoints that accept a `role`, `isAdmin`, `permissions` field in the body with no filtering (mass assignment).
 - JWTs whose `role` or `permissions` claims are derived from unvalidated user data.
-- Use of `Object.assign(user, req.body)` or equivalent (unfiltered `@RequestBody User user`, `User.objects.create(**request.data)` in Django): a **mass assignment** pattern. OWASP maps CWE-915 to A08:2025; report it here when it leads to privilege escalation and add `→ See also A08`.
+- Use of `Object.assign(user, req.body)` or an equivalent unfiltered model update: a mass-assignment lead. Report the unfiltered binding under A08; report a distinct missing authorization check here only if that root cause is also present.
 
 **Typical severity:** Critical.
 
@@ -194,7 +196,7 @@ app.post("/api/users/:id/role", requireAuth, async (req, res) => {
 
 ### A01.6 - CORS misconfiguration
 
-**CWE-942** - Permissive Cross-domain Policy with Untrusted Domains
+**Routing note:** CORS configuration uses the mapped CWE in A02:2025. Use this section to inspect the access-control impact, then report the configuration under A02.13.
 
 **Pattern:** the CORS configuration allows untrusted origins, letting a malicious site running in an authenticated victim's browser read API responses on their behalf.
 
@@ -237,7 +239,7 @@ app.use(
 
 **Important note:** CORS is not an authentication mechanism, it only protects against cross-origin requests initiated by a browser. `curl`, Postman, and mobile apps ignore it. True protection remains server-side auth/authorization.
 
-**Typical severity:** High (if the API is sensitive and uses credentials), Medium otherwise.
+**Severity:** determine from the actual sensitive response and whether an untrusted browser origin can read it. A wildcard alone on a public API is not a finding.
 
 ---
 
@@ -251,8 +253,8 @@ app.use(
 
 - Mutation endpoints (POST/PUT/DELETE) that rely on a session cookie **without**:
   - A verified CSRF token, **OR**
-  - A `SameSite=Lax` or `SameSite=Strict` cookie, **OR**
-  - Verification of a custom header (which forces a CORS preflight).
+  - A defense shown to prevent the relevant cross-site request, such as verified Origin/Fetch Metadata checks or a custom header with restrictive CORS.
+- Treat `SameSite` as defense in depth. It can suffice alone only under the narrow conditions in the OWASP CSRF Prevention Cheat Sheet; check state-changing GET routes and same-site subdomains before relying on it.
 - Frameworks with native CSRF protection disabled (`csrf_exempt` in Django, `@CsrfToken(false)`, global middleware disabled).
 
 **Note:** stateless APIs using a JWT in the `Authorization` header are not vulnerable to classic CSRF (the browser does not automatically send the header). However, if the JWT is stored in a cookie, the risk returns.
@@ -282,20 +284,20 @@ app.get("/files", (req, res) => {
 });
 ```
 
-**Fix (resolution + containment check):**
+**Fix (identifier allowlist):**
 
 ```javascript
-const UPLOAD_DIR = path.resolve("/var/app/uploads");
+const FILES = new Map([
+  ["public-guide", "/var/app/uploads/public-guide.pdf"],
+]);
 app.get("/files", (req, res) => {
-  const requested = path.resolve(UPLOAD_DIR, req.query.name);
-  if (!requested.startsWith(UPLOAD_DIR + path.sep)) {
-    return res.status(403).json({ error: "Forbidden" });
-  }
+  const requested = FILES.get(req.query.name);
+  if (!requested) return res.status(404).json({ error: "Not found" });
   res.sendFile(requested);
 });
 ```
 
-**Even more robust approach: allowlist.** If the accessible files are known, map a validated identifier to a predefined path rather than deriving the path from user input.
+If arbitrary names are required, resolve filesystem paths and symbolic links and account for file changes between checking and serving. A string-prefix check alone does not contain symbolic links.
 
 **Typical severity:** Critical (reading `/etc/passwd`, configuration files, private keys).
 
@@ -303,7 +305,7 @@ app.get("/files", (req, res) => {
 
 ### A01.9 - Token / metadata manipulation (JWT, cookies)
 
-**CWE-639** - Authorization Bypass Through User-Controlled Key | related: CWE-345, CWE-347
+**CWE-639** - Authorization Bypass Through User-Controlled Key
 
 > **Deduplication:** when the root cause is a missing or broken signature check, report it once under A04.6 (signature) or A07.8 (claims validation) and add a `→ See also A01` mention here.
 
@@ -343,7 +345,7 @@ req.user = payload;
 
 ### A01.10 - New features with no default control
 
-**CWE-862** - Missing Authorization | **CWE-1188** - Initialization of a Resource with an Insecure Default
+**CWE-862** - Missing Authorization
 
 **Pattern:** a recently added route or feature does not follow the authentication pattern used by the rest of the application. Often introduced during rapid development or an incomplete copy-paste.
 
@@ -398,71 +400,33 @@ const resolvers = {
 };
 ```
 
-**Fix, per-field authorization with graphql-shield:**
+**Fix, per-field and per-object authorization:**
+
+Use the authorization mechanism already present in the detected GraphQL server. Check both the resolver that loads the object and any sensitive field resolver; do not rely on the client selecting only safe fields. The following is an illustrative resolver fragment, not a complete Apollo schema:
 
 ```javascript
-// ✅ graphql-shield: centralized, composable authorization rules
-const { shield, and, or, rule, allow, deny } = require("graphql-shield");
+const { GraphQLError } = require("graphql");
 
-const isAuthenticated = rule({ cache: "contextual" })(
-  async (parent, args, ctx) => ctx.user !== null,
-);
-
-const isAdmin = rule({ cache: "contextual" })(
-  async (parent, args, ctx) => ctx.user?.role === "admin",
-);
-
-const isOwner = rule({ cache: "strict" })(
-  async (parent, args, ctx) => parent.id === ctx.user?.id,
-);
-
-const permissions = shield({
-  Query: {
-    users: isAdmin,
-    user: isAuthenticated, // ownership is checked in the resolver
-  },
-  User: {
-    email: or(isOwner, isAdmin), // accessible only by the owner or an admin
-    adminNotes: isAdmin, // admin only
-    passwordHash: deny, // never exposed
-    ssn: deny, // never exposed
-  },
+const resolvers = {
   Mutation: {
-    deleteUser: isAdmin,
-    updateUserRole: isAdmin,
-    updateProfile: isAuthenticated, // ownership check in the resolver
+    deleteUser: async (_, { id }, { user }) => {
+      if (!user) {
+        throw new GraphQLError("Not authenticated", {
+          extensions: { code: "UNAUTHENTICATED" },
+        });
+      }
+      if (user.role !== "admin") {
+        throw new GraphQLError("Forbidden", {
+          extensions: { code: "FORBIDDEN" },
+        });
+      }
+      return User.findByIdAndDelete(id);
+    },
   },
-});
-
-// Integration into Apollo Server v4
-const server = new ApolloServer({
-  schema: applyMiddleware(schema, permissions),
-});
+};
 ```
 
-**Alternative fix, inline verification in each resolver:**
-
-```javascript
-// ✅ If graphql-shield is not used, systematic check in each resolver
-// (Apollo Server 4+ removed AuthenticationError/ForbiddenError: use GraphQLError with a code)
-const { GraphQLError } = require('graphql');
-const forbidden = (msg) => new GraphQLError(msg, { extensions: { code: 'FORBIDDEN' } });
-
-Mutation: {
-  deleteUser: async (_, { id }, { user }) => {
-    if (!user) throw new GraphQLError('Not authenticated', { extensions: { code: 'UNAUTHENTICATED' } });
-    if (user.role !== 'admin') throw forbidden('Admins only');
-    return User.findByIdAndDelete(id);
-  },
-  updateProfile: async (_, { id, data }, { user }) => {
-    if (!user) throw new GraphQLError('Not authenticated', { extensions: { code: 'UNAUTHENTICATED' } });
-    if (user.id !== id && user.role !== 'admin') throw forbidden('Access denied');
-    // Filter allowed fields (avoid GraphQL mass assignment)
-    const { name, bio } = data; // never `role`, `isAdmin`, etc.
-    return User.findByIdAndUpdate(id, { name, bio });
-  }
-}
-```
+Also authorize access to individual user records and sensitive fields, and bind update inputs to an explicit field allowlist. Verify the server's middleware and schema wiring in the actual project before claiming a missing check.
 
 **Additional points to check:**
 
@@ -514,40 +478,7 @@ http://internal-admin.corp:8080/api/users
 http://10.0.0.5:6379/
 ```
 
-**Fix, destination allowlist + address checks + no redirects:**
-
-```javascript
-// ✅ Validate the destination before any outbound request
-const dns = require("dns").promises;
-const net = require("net");
-
-const ALLOWED_HOSTS = new Set(["api.trusted-service.com", "uploads.cdn.com"]);
-
-function isPrivateAddress(ip) {
-  if (net.isIPv4(ip)) {
-    return /^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(ip);
-  }
-  const v6 = ip.toLowerCase();
-  return v6 === "::1" || v6 === "::" || v6.startsWith("fc") || v6.startsWith("fd") ||
-         v6.startsWith("fe80:") || v6.startsWith("::ffff:"); // also rejects IPv4-mapped IPv6
-}
-
-async function assertSafeUrl(rawUrl) {
-  const parsed = new URL(rawUrl); // throws on invalid URL
-  if (parsed.protocol !== "https:") throw new Error("Protocol not allowed");
-  if (!ALLOWED_HOSTS.has(parsed.hostname)) throw new Error("Host not allowed");
-  const addresses = await dns.lookup(parsed.hostname, { all: true }); // IPv4 and IPv6
-  if (addresses.some(({ address }) => isPrivateAddress(address))) {
-    throw new Error("Private destination forbidden");
-  }
-  return parsed;
-}
-
-// Never follow redirects automatically: each hop would need the same validation
-const res = await fetch((await assertSafeUrl(url)).href, { redirect: "error" });
-```
-
-**Note on DNS rebinding:** validating the resolved address and then letting the HTTP client resolve the name again leaves a time-of-check/time-of-use gap. Robust options: connect to the validated IP (custom agent / `lookup` hook), or route outbound requests through an egress proxy that enforces the policy. Network-level controls (egress firewall rules, IMDSv2 on AWS) are the strongest mitigation and are not visible in application code, so note them as a limitation rather than assuming they exist.
+**Fix:** define an exact allowlist of destinations where possible. Otherwise validate the parsed scheme and hostname, resolve every A and AAAA address, reject forbidden addresses, and bind the validated address to the actual connection. Revalidate every redirect target or disable redirects. Enforce the same policy at an egress proxy or firewall. A separate DNS lookup followed by a normal HTTP request is only a partial check because the client may resolve again.
 
 **Typical severity:** 🔴 Critical (response returned to the attacker and cloud metadata or internal admin services reachable) to 🟠 High (blind SSRF, or destination partially restricted). Lower the confidence, not the severity, when network egress controls are unknown.
 
@@ -617,7 +548,7 @@ When an A01 finding is identified, use this grid to calibrate:
 
 ## Finding template for the report
 
-Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
+Use the finding block defined in `references/report-format.md`. Category-specific fields:
 
 - **Sub-type:** A01.X - [sub-type name]
 - **Severity justification:** [1 sentence; specify who can exploit it (anonymous, any authenticated user, a specific role) and which resource or action is exposed]

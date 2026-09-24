@@ -1,7 +1,9 @@
 # A02 - Security Misconfiguration
 
+**Examples are illustrative; transpose each pattern to the detected stack and verify that the relevant code runs in the claimed execution context.**
+
 **Reference framework:** OWASP Top 10 (2025), category A02
-**Key CWEs:** CWE-16, CWE-260, CWE-315, CWE-489, CWE-526, CWE-547, CWE-611, CWE-614, CWE-776, CWE-942, CWE-1004
+**Key CWEs:** CWE-260, CWE-315, CWE-489, CWE-526, CWE-547, CWE-611, CWE-614, CWE-776, CWE-942, CWE-1004
 **Finding format:** `OWASP-A02-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A02. It provides detection patterns, standard fixes, and the severity grid specific to security misconfigurations.
@@ -95,9 +97,9 @@ A02 contains many findings that are **defense-in-depth gaps** (e.g., a missing s
 
 ### A02.2 - Secrets in configuration files and build artifacts
 
-**CWE-260** - Password in Configuration File | **CWE-547** - Use of Hard-coded, Security-relevant Constants | related: CWE-798 Use of Hard-coded Credentials
+**CWE-260** - Password in Configuration File | **CWE-547** - Use of Hard-coded, Security-relevant Constants
 
-> **Deduplication:** report a given secret once. Credentials hard-coded in source code used to authenticate to another system: A07.1 (CWE-798). Cryptographic keys and signing secrets: A04.5 (CWE-321). Secrets in configuration files, `.env` files, Dockerfiles, or images: here. Add `→ See also` mentions in the other categories.
+> **Deduplication:** report a given secret once. Credentials hard-coded in source code used to authenticate to another system: A07.1. Cryptographic keys and signing secrets: A04.5. Secrets in configuration files, `.env` files, Dockerfiles, or images: here. Add `See also` mentions in other categories.
 
 **Pattern:** passwords, API keys, encryption keys, authentication tokens, private certificates present in the source code, in versioned configuration files, or in Docker images.
 
@@ -118,7 +120,7 @@ A02 contains many findings that are **defense-in-depth gaps** (e.g., a missing s
 
 ### A02.3 - Verbose error configuration exposing the technology stack
 
-**CWE-16** - Configuration | related: CWE-209 Generation of Error Message Containing Sensitive Information and CWE-756 Missing Custom Error Page
+**Routing note:** use the specific mapped A02 weakness when a production debug setting is active; code that returns error details belongs under A10.1.
 
 > **Deduplication:** when the root cause is a configuration switch (framework debug error pages, `display_errors=On`, version headers), report here. When application code returns exception details to the client (`err.stack`, `$e->getMessage()`), report under A10.1 and add `→ See also A02.3`.
 
@@ -159,7 +161,7 @@ app.use((err, req, res, next) => {
 
 ### A02.4 - Directory listing enabled
 
-**CWE-548** - Exposure of Information Through Directory Listing
+**Routing note:** the mapped directory-listing weakness belongs to A01:2025. Inspect it here as a configuration clue, but report actual exposure under A01.
 
 **Pattern:** the web server allows browsing directories without an index file, exposing backup files (`.bak`, `.old`, `.zip`), configurations, source code, or forgotten private keys.
 
@@ -188,7 +190,7 @@ server {
 
 ### A02.5 - Misconfigured session cookies
 
-**CWE-614** - Sensitive Cookie in HTTPS Session Without 'Secure' Attribute | **CWE-1004** - Sensitive Cookie Without 'HttpOnly' Flag | related: CWE-1275 Sensitive Cookie with Improper SameSite Attribute
+**CWE-614** - Sensitive Cookie in HTTPS Session Without 'Secure' Attribute | **CWE-1004** - Sensitive Cookie Without 'HttpOnly' Flag
 
 **Pattern:** a cookie carrying a session identifier or sensitive data does not carry the appropriate protection attributes.
 
@@ -222,7 +224,7 @@ res.cookie("session", token, {
 
 ### A02.6 - Missing or misconfigured HTTP security headers
 
-**CWE-16** - Configuration | related: CWE-693 Protection Mechanism Failure and CWE-1021 Improper Restriction of Rendered UI Layers
+**Mapping note:** choose a specific mapped weakness when a missing or lax header creates a demonstrated security problem. A missing header alone can be a hardening observation without a CWE.
 
 **Pattern:** absence or lax configuration of standard security headers. A defense-in-depth layer, rarely exploitable on its own, but amplifies any other flaw (XSS, clickjacking, SSL stripping).
 
@@ -311,7 +313,7 @@ $doc = simplexml_load_string($xml);
 
 ### A02.8 - Overly permissive cloud permissions
 
-**CWE-16** - Configuration | related: CWE-732 Incorrect Permission Assignment for Critical Resource
+**Mapping note:** assess the concrete resource exposure and use a specific mapped weakness in the category that owns it; do not use a generic configuration category as a finding CWE.
 
 **Pattern:** a cloud resource configured with permissions broader than necessary: public S3 bucket, IAM policy with wildcards, security group open on `0.0.0.0/0`, publicly accessible database.
 
@@ -336,7 +338,7 @@ $doc = simplexml_load_string($xml);
 
 ### A02.9 - Default components not removed
 
-**CWE-1188** - Initialization of a Resource with an Insecure Default
+**Mapping note:** report a specific exposed default component or credential under its owning category when evidence supports one.
 
 **Pattern:** example pages, default accounts, admin interfaces, or documentation shipped with a server or framework, left in place in production.
 
@@ -355,7 +357,7 @@ $doc = simplexml_load_string($xml);
 
 ### A02.10 - Absence of a reproducible hardening process
 
-**CWE-16** - Configuration
+**Mapping note:** this is a process observation, not a concrete CWE-mapped vulnerability by itself.
 
 **Pattern:** the secure configuration exists but depends on human vigilance; there is no pipeline that validates it, no IaC, no regular audit. Risk of **drift over time**: a debug mode temporarily enabled and forgotten, a manually edited configuration file, a new framework version introducing an option left at its default.
 
@@ -374,7 +376,7 @@ $doc = simplexml_load_string($xml);
 
 ### A02.11 - Exposed build artifacts and sensitive files
 
-**CWE-538** - Insertion of Sensitive Information into Externally-Accessible File | **CWE-540** - Inclusion of Sensitive Information in Source Code
+**Routing note:** exposed sensitive files map to A01:2025. Inspect build and webroot configuration here, then report the concrete exposure once under A01.
 
 **Pattern:** files that should not reach production (source maps, test files, hidden files, dev dependencies) end up in the delivered artifacts.
 
@@ -404,7 +406,7 @@ location ~ /\. { deny all; }
 
 ### A02.12 - Container and orchestration misconfiguration
 
-**CWE-16** - Configuration | related: CWE-250 Execution with Unnecessary Privileges
+**Mapping note:** use a specific mapped weakness only when the deployed exposure and security impact are established.
 
 > Applies only when container or orchestration files are in scope (`Dockerfile`, `compose.yaml`, Kubernetes manifests, Helm charts). These files describe intent; the running configuration may differ, so keep confidence at Medium or lower unless the deployment configuration is also provided.
 
@@ -419,6 +421,12 @@ location ~ /\. { deny all; }
 **Typical severity:** 🟡 Medium (root user, broad port exposure) to 🔴 Critical (Docker socket or privileged mode in a container exposed to untrusted input).
 
 ---
+
+### A02.13 - Permissive cross-origin policy
+
+**CWE-942** - Permissive Cross-domain Policy with Untrusted Domains
+
+Check whether a credentialed browser can read sensitive responses from an untrusted origin. Trace the actual CORS middleware and response headers, including dynamic origin reflection, allowlist matching, `Access-Control-Allow-Credentials`, and cache behavior. A wildcard on public, unauthenticated data is not a finding. CORS does not replace authentication or authorization. Use the illustrative policy check in A01.6, and report the root configuration flaw here only when a sensitive response is exposed.
 
 ## Cross-cutting remediation rules
 
@@ -441,10 +449,12 @@ These principles guide recommendations regardless of the sub-type:
 
 | Finding criteria                                                                                                                                                                            | Severity         |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| Exposed production secret, active debug mode in production, public cloud bucket with sensitive data, exploitable XXE, accessible `.git/` or `.env`                                          | 🔴 Critical      |
-| Exposed SQL stack trace, public source maps, directory listing exposing sensitive files, session cookie without `HttpOnly` AND without `Secure`, default component with default credentials | 🟠 High          |
-| Directory listing with no sensitive file visible, major security header missing (HSTS, CSP), permissive CSP, error message revealing a component's version                                  | 🟡 Medium        |
-| Minor missing header (Referrer-Policy, X-Content-Type-Options), `X-Powered-By` header exposed alone                                                                                         | 🟢 Low           |
+| Confirmed exposed production credential with broad privilege, sensitive public data store, or exploitable external-entity processing with severe impact | 🔴 Critical |
+| Confirmed sensitive data exposure through debug output, directory listing, source map, or misconfigured cross-origin policy | 🟠 High |
+| Exposed configuration that enables a limited but demonstrated attack path | 🟡 Medium |
+| Information disclosure or missing hardening header with a small demonstrated impact | 🟢 Low |
+
+Missing headers, source maps, a debug flag, or a broad-looking configuration are leads until the deployed environment, data sensitivity, and compensating controls are checked. Do not assign severity from a search hit alone.
 | Absence of IaC, slightly divergent environments, lack of recurring audit, with no observed drift                                                                                            | ℹ️ Informational |
 
 **Amplification rule:** an isolated A02 finding may be Low, but combined with another flaw (XSS + absence of CSP, XXE + SVG parser) it becomes an amplifier. Mention this explicitly in the severity justification.
@@ -466,7 +476,7 @@ These principles guide recommendations regardless of the sub-type:
 
 ## Finding template for the report
 
-Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
+Use the finding block defined in `references/report-format.md`. Category-specific fields:
 
 - **Sub-type:** A02.X - [sub-type name]
 - **Severity justification:** [1 sentence; specify whether the setting is active in the deployed configuration and whether it amplifies another known flaw]

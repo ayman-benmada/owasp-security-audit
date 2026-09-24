@@ -1,5 +1,7 @@
 # A06: Insecure Design
 
+**Examples are illustrative; transpose each pattern to the detected stack and verify that the relevant code runs in the claimed execution context.**
+
 **Reference:** OWASP Top 10 (2025), category A06
 **Key CWEs:** CWE-73, CWE-183, CWE-256, CWE-362, CWE-434, CWE-444, CWE-451, CWE-602, CWE-653, CWE-657, CWE-799, CWE-841, CWE-1021
 **Finding format:** `OWASP-A06-NNN`
@@ -158,7 +160,7 @@ async function reserveSeats(req, res) {
 
 ### A06.2: Lack of Bot Protection in Sensitive Flows
 
-**CWE-799**: Improper Control of Interaction Frequency | **CWE-770**: Allocation of Resources Without Limits or Throttling
+**CWE-799**: Improper Control of Interaction Frequency
 
 **Pattern:** a commercial or critical flow (purchase, registration, password reset) includes no behavioral barrier. Bots can automate this flow at a rate incompatible with human behavior, causing resource hoarding, scalping, credential stuffing, or account creation fraud.
 
@@ -241,7 +243,7 @@ async function checkout(req, res) {
 
 ### A06.3: Unreliable Account Recovery Mechanisms
 
-**CWE-640**: Weak Password Recovery Mechanism for Forgotten Password
+**Routing note:** concrete weak password recovery maps to A07:2025. Use this section to assess a broader workflow design issue, then report the authentication root cause under A07. This section alone does not establish a separate finding.
 
 **Pattern:** the access recovery mechanism relies on insufficient proof of identity: secret questions, a password hint, or a reset link without an expiration. This information can be known, guessed, or brute-forced by third parties.
 
@@ -270,7 +272,7 @@ async function checkout(req, res) {
 
 **CWE-653**: Improper Isolation or Compartmentalization | **CWE-657**: Violation of Secure Design Principles
 
-**Pattern:** in a SaaS application, the separation between tenants relies solely on a `tenant_id` filter in the application code. The slightest developer oversight exposes one customer's data to another. A robust design makes this leak **structurally impossible**.
+**Pattern:** tenant context can be controlled by a client or is inconsistently applied across routes, queries, caches, or jobs. An application-level tenant filter can be effective when consistently enforced; the absence of database row-level security alone is not a vulnerability.
 
 **Detection, look for:**
 
@@ -283,7 +285,7 @@ async function checkout(req, res) {
 **Vulnerable code:**
 
 ```javascript
-// ❌ Application-level filter only, a single developer oversight is enough
+// An application-level filter that must be checked across every access path
 async function getInvoices(req, res) {
   const tenantId = req.user.tenantId;
   const invoices = await db.query(
@@ -301,7 +303,8 @@ async function getInvoices(req, res) {
 // ✅ Level 1: PostgreSQL Row-Level Security
 // CREATE POLICY tenant_isolation ON invoices
 //   USING (tenant_id = current_setting('app.tenant_id')::uuid);
-// Even if a SQL query forgets the filter, the database refuses to return the rows
+// Enable RLS on the table and use a DB role subject to the policy.
+// Table owners can bypass RLS unless FORCE ROW LEVEL SECURITY is set.
 
 // ✅ Level 2: set the tenant for the current transaction
 // SET does not accept bind parameters: use set_config(), and run it inside the same
@@ -317,13 +320,14 @@ async function withTenant(tenantId, work) {
 
 // ✅ Level 3: repository requiring a tenantId at construction
 class InvoiceRepository {
-  constructor(tenantId) {
+  constructor(tx, tenantId) {
     if (!tenantId) throw new Error("tenantId is required");
+    this.tx = tx;
     this.tenantId = tenantId;
   }
   async findById(id) {
     // Double protection: RLS (DB) + explicit filter (app)
-    const result = await db.query(
+    const result = await this.tx.query(
       "SELECT * FROM invoices WHERE id = $1 AND tenant_id = $2",
       [id, this.tenantId],
     );
@@ -343,7 +347,7 @@ const queueName = `tenant:${tenantId}:invoice-processing`;
 
 ### A06.5: Unprotected Storage of Credentials by Design
 
-**CWE-256**: Plaintext Storage of a Password | **CWE-257**: Storing Passwords in a Recoverable Format
+**CWE-256**: Plaintext Storage of a Password
 
 **Pattern:** the architecture for storing credentials (passwords, API tokens, secrets) was not designed to be secure. This is not an implementation oversight but an incorrect architectural decision, for example designing a "recover my password" feature (which implies reversible storage), or failing to define a hashing standard from the design phase onward.
 
@@ -373,12 +377,13 @@ const queueName = `tenant:${tenantId}:invoice-processing`;
 ```php
 // ❌ Error 1: insufficient validation
 $request->validate(['file' => 'required|file']);
+$file = $request->file('file');
 
 // ❌ Error 2: MIME type declared by the client (can be forged)
 $mimeType = $file->getClientMimeType(); // the attacker controls this value
 
-// ❌ Error 3: original client filename (path traversal possible)
-$originalName = $file->getClientOriginalName(); // may contain "../../../etc/passwd"
+// ❌ Error 3: original client filename is not a trusted storage identifier
+$originalName = $file->getClientOriginalName(); // may collide or be misleading
 
 // ❌ Error 4: stored in the public folder (executable via URL)
 $file->move(public_path('uploads'), $originalName);
@@ -398,16 +403,19 @@ $request->validate([
     // 'mimes' infers the type from the file content (finfo), not from the declared Content-Type
 ]);
 
+// Obtain the file after validation
+$file = $request->file('file');
+
 // ✅ Rule 2: double-check of the actual MIME type
 if (!in_array($file->getMimeType(), ['image/jpeg', 'image/png', 'application/pdf'], true)) {
     return response()->json(['error' => 'Unauthorized type'], 400);
 }
 
 // ✅ Rule 3: randomly generated name, original name ignored
-$safeName = Str::random(32) . '.' . $file->extension();
+$safeName = \Illuminate\Support\Str::random(32) . '.' . $file->extension();
 
 // ✅ Rule 4: stored outside the public directory (not accessible via a direct URL)
-$file->storeAs('uploads', $safeName, disk: 'private');
+$file->storeAs('uploads', $safeName, 'private'); // requires a configured non-public disk
 
 // ✅ Rule 5: access via a dedicated endpoint that checks permissions
 return response()->json(['id' => $safeName]); // never the real path
@@ -423,7 +431,7 @@ return response()->json(['id' => $safeName]); // never the real path
 
 ### A06.7: Concurrency Issues in Critical Workflows (TOCTOU)
 
-**CWE-362**: Concurrent Execution using Shared Resource with Improper Synchronization (Race Condition) | **CWE-367**: Time-of-check Time-of-use (TOCTOU) Race Condition
+**CWE-362**: Concurrent Execution using Shared Resource with Improper Synchronization (Race Condition)
 
 **Pattern:** a feature is designed assuming a flow will only ever be triggered once at a time. Without an atomicity mechanism, two simultaneous requests can check a condition at the same moment (both see "coupon not used"), then both apply the action (both grant the credit).
 
@@ -514,7 +522,7 @@ async function redeemCoupon(userId, couponCode) {
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
 | RCE via unrestricted upload, cross-tenant leak, double spending/fraud via a race condition, a bypassable recovery mechanism leading to account takeover                                      | 🔴 Critical      |
 | Business logic abuse with significant economic impact, no rate limiting on an auth endpoint (credential stuffing), no anti-bot protection on limited high-demand resources                   | 🟠 High          |
-| Race condition without direct financial impact, tenant separation that is application-level only (without RLS), a weak recovery mechanism that cannot be bypassed without social engineering | 🟡 Medium        |
+| Race condition without direct financial impact, demonstrated inconsistent tenant filtering, a weak recovery mechanism with bounded impact | 🟡 Medium        |
 | Rate limiting missing on a non-sensitive endpoint, missing per-user limits with no proven risk of abuse                                                                                      | 🟢 Low           |
 | Good design practice not followed, with no identifiable exploitation vector                                                                                                                  | ℹ️ Informational |
 
@@ -536,7 +544,7 @@ async function redeemCoupon(userId, couponCode) {
 
 ## Finding template for the report
 
-Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
+Use the finding block defined in `references/report-format.md`. Category-specific fields:
 
 - **Sub-type:** A06.X - [sub-type name]
 - **Severity justification:** [1 sentence; specify the concrete business or operational impact, and whether a code patch alone is insufficient]

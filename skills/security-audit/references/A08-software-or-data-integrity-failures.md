@@ -1,5 +1,7 @@
 # A08 - Software or Data Integrity Failures
 
+Examples are illustrative; transpose them to the detected stack and the execution context of the actual code before reporting a finding.
+
 **Reference standard:** OWASP Top 10 (2025), category A08
 **Key CWEs:** CWE-345, CWE-353, CWE-494, CWE-502, CWE-506, CWE-565, CWE-784, CWE-829, CWE-830, CWE-915
 **Finding format:** `OWASP-A08-NNN`
@@ -93,23 +95,7 @@ For each identified entry point:
 
 **Fix, immutable references:**
 
-```yaml
-# ✅ Full commit SHA (40 characters) - immutable by definition
-- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
-
-# ✅ Third-party action audited and pinned to a SHA
-- uses: some-org/some-action@a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 # v2.3.1
-
-# ✅ Script downloaded, verified, then executed
-- name: Download and verify script
-  run: |
-    curl -fsSL -o script.sh https://example.com/script.sh
-    echo "abc123def456...  script.sh" | sha256sum -c -
-    bash script.sh
-
-# ✅ Docker image pinned to a digest
-- run: docker pull myapp@sha256:abc123...
-```
+Pin each action to the reviewed full commit SHA, each container image to its verified digest, and each downloaded script to a verified complete digest before execution. Review the source and the digest together. Placeholder hashes are not usable safeguards. Do not run downloaded scripts during the audit without explicit user approval.
 
 **Three principles of a hardened pipeline:**
 
@@ -119,16 +105,7 @@ For each identified entry point:
 
 **Minimal permissions in GitHub Actions:**
 
-```yaml
-# ✅ Permissions explicitly restricted to the minimum necessary
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read # read-only - no write, no publishing
-    steps:
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
-```
+For GitHub Actions, inspect the workflow's effective `permissions` and reduce them to the job's needs. `contents: read` is appropriate for a checkout that only reads the repository. Verify any action pin against the actual reviewed upstream commit.
 
 **Typical severity:** High to Critical (a compromised pipeline has privileged access to secrets, registries, and production environments).
 
@@ -155,7 +132,7 @@ jobs:
 - Absence of a lockfile (`package-lock.json`, `composer.lock`, `Pipfile.lock`, `go.sum`).
 - Use of `npm install` instead of `npm ci` in CI (does not guarantee reproducibility).
 - Packages downloaded from direct URLs rather than from the official registry.
-- `lockfile-lint` absent from the pipeline (does not validate that download URLs use HTTPS and come only from the official registry).
+- Lockfile download sources are not restricted to the expected registries, when the package manager and lockfile support such checks.
 
 **Vulnerable vs. fixed code:**
 
@@ -166,14 +143,11 @@ jobs:
     "lodash": "4.17.21",
     "internal-utils": "1.2.3"
   }
-  // lockfile-lint itself is pinned in devDependencies and installed from the lockfile
+  // Resolve and review the complete dependency tree in the lockfile.
 }
 ```
 
-```yaml
-# ✅ CI step: validate lockfile sources before installing (no ad-hoc `npx --yes` download)
-- run: npx lockfile-lint --path package-lock.json --validate-https --allowed-hosts npm
-```
+Validate lockfile sources with a reviewed, pinned tool appropriate to the project's package manager. Installing a tool solely to run this check still requires explicit approval during an audit.
 
 ```bash
 # ❌ Install without any guarantee of reproducibility
@@ -184,7 +158,7 @@ npm ci
 npm audit --audit-level=high
 ```
 
-**Overlap with A03.3:** floating versions and missing lockfiles are described in both guides. Report them once, under A08.2 when the concern is integrity of what gets installed, or A03.3 when it is exposure to vulnerable versions.
+**Overlap with A03.3:** a specific vulnerable dependency or a missing supply chain governance control belongs under A03. A mutable source or artifact reference that permits unverified code substitution belongs here. A version range alone is a lead; inspect the effective lockfile and install procedure before reporting. Report one root cause once.
 
 **Dependency confusion:** an attack in which an attacker publishes a package on a public registry that has the same name as an internal package. If the resolver checks the public registry first, it installs the malicious package. Detect this by verifying that internal packages are configured to resolve only from the internal registry (`.npmrc` with `@scope:registry=https://internal-registry/`).
 
@@ -196,7 +170,7 @@ npm audit --audit-level=high
 
 **CWE-502** - Deserialization of Untrusted Data | **CWE-565** - Reliance on Cookies without Validation and Integrity Checking
 
-**Pattern:** user-controlled data is passed to a native deserialization function (`unserialize()` in PHP, `pickle.loads()` in Python, `ObjectInputStream` in Java, `BinaryFormatter` in .NET). These functions instantiate real objects and automatically trigger special methods (magic methods), without any explicit action from the developer. An attacker who controls the serialized string also controls which classes are instantiated and which methods run.
+**Pattern:** user-controlled data is passed to a native deserialization function (`unserialize()` in PHP, `pickle.loads()` in Python, `ObjectInputStream` in Java). These can instantiate application objects and invoke special methods. Assess the actual runtime and reachable classes before stating impact.
 
 **Exploitation mechanism (PHP):**
 
@@ -214,26 +188,25 @@ class FileCache {
 
 // ❌ Deserialization of a client-controlled cookie
 $session = unserialize($_COOKIE['session']);
-// Attacker payload:
-// O:9:"FileCache":2:{s:9:"cacheFile";s:24:"/var/www/html/shell.php";s:7:"content";s:29:"<?php system($_GET['c']); ?>";}
-// -> PHP instantiates FileCache, sets the properties, then __destruct() writes a web shell
+// An attacker may construct an object whose destructor writes attacker-controlled content.
 ```
 
-**What makes this risk distinctive:** exploitation requires no flaw in either `FileCache` or `unserialize()`. It is the use of `unserialize()` on external data that is inherently dangerous, it turns data into executable logic. Tools such as **phpggc** (PHP) and **ysoserial** (Java) contain pre-built gadget chains for popular frameworks (Symfony, Laravel, Spring, Apache Commons).
+**What makes this risk distinctive:** native deserialization can instantiate application classes and invoke special methods. Whether the path is exploitable depends on the classes present and reachable in the actual runtime.
 
 **Detection, look for:**
 
 ```php
 // ❌ PHP - unserialize on external data
-unserialize($_COOKIE['...'])
-unserialize($_POST['...'])
-unserialize($_GET['...'])
-unserialize(base64_decode($input)) // common obfuscation attempt
+unserialize($_COOKIE['session']);
+unserialize($_POST['data']);
+unserialize($_GET['data']);
+unserialize(base64_decode($input));
 ```
 
 ```python
 # ❌ Python - pickle on external data
 import pickle
+import base64
 obj = pickle.loads(request.data)
 obj = pickle.loads(base64.b64decode(cookie_value))
 ```
@@ -242,12 +215,6 @@ obj = pickle.loads(base64.b64decode(cookie_value))
 // ❌ Java - ObjectInputStream on unverified data
 ObjectInputStream ois = new ObjectInputStream(request.getInputStream());
 Object obj = ois.readObject();
-```
-
-```csharp
-// ❌ .NET - BinaryFormatter (obsolete since .NET 5; the implementation was removed in .NET 9)
-BinaryFormatter bf = new BinaryFormatter();
-object obj = bf.Deserialize(stream);
 ```
 
 **Main fix, replace with a pure data format:**
@@ -298,7 +265,6 @@ $session = unserialize($payload, ['allowed_classes' => ['UserSession', 'UserPref
 | PHP `serialize()` / `unserialize()` | High                | Replace with JSON                |
 | Python `pickle`                     | High                | Replace with JSON                |
 | Java `ObjectInputStream`            | High                | Replace with JSON/Protobuf       |
-| .NET `BinaryFormatter`              | High                | Removed in .NET 9, migrate       |
 | JSON                                | None                | Recommended format               |
 | Protobuf / MessagePack              | Low                 | Acceptable with validated schema |
 | YAML (with constructors)            | Moderate            | Disable custom constructors      |
@@ -384,7 +350,7 @@ app.post(
 
 **Fix:** bind to an explicit allowlist of fields (DTO, serializer with explicit `fields`, `$fillable`, `pick()`), never to the persistence entity directly.
 
-**Deduplication:** when mass assignment results in privilege escalation (writable `role`, `isAdmin`, `permissions`), report it under A01.5 and add `→ See also A08.5` here. Otherwise report it here.
+**Deduplication:** report the request-body binding flaw here, including when a privileged field is writable. If an independent authorization check also fails, report that separate root cause under A01. Do not duplicate one binding flaw in both categories.
 
 **Typical severity:** 🟠 High (ownership, balance, or verification fields writable) to 🟡 Medium (fields with limited security impact). Privilege escalation cases are reported under A01.5.
 
@@ -395,7 +361,7 @@ app.post(
 1. **Immutable references in pipelines**, full commit SHA (40 hex characters) for Git actions, `sha256:...` digest for Docker images. Never floating tags (`latest`, `main`, `v4`).
 2. **Hash verification before execution**, any script downloaded on the fly must be written to a local file, have its SHA-256 hash checked against a known value, and only then executed if the verification passes.
 3. **Least privilege in pipelines**, `permissions: contents: read` by default, explicitly expanded as needed per job.
-4. **Lockfile + `npm ci`**, exactly pinned versions, lockfile validated before install (`lockfile-lint`), `npm ci` in CI.
+4. **Lockfile + `npm ci`**, verify the resolved dependency tree and the sources recorded in the lockfile before installation.
 5. **Deserialization: JSON first**, replace `unserialize()`, `pickle.loads()`, `ObjectInputStream` with JSON or Protobuf on any externally sourced data flow.
 6. **HMAC signature before deserialization**, if native serialization is unavoidable: sign before sending, verify with `hash_equals()` before deserializing, then restrict `allowed_classes`.
 7. **Webhook verification**, validate the HMAC signature of every webhook before any processing, on the raw, unparsed body.
@@ -409,13 +375,12 @@ app.post(
 
 | Finding criteria                                                                                                                                                                                                                                                           | Severity      |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| Native deserialization on external data without signature (potential RCE), pipeline with a floating tag on an action that has write access to secrets or the registry, confirmed dependency confusion, webhook without signature verification triggering sensitive actions | Critical      |
-| Pipeline with floating tags without critical access, `curl \| bash` script without verification, missing lockfile on an exposed app, mass assignment of sensitive fields (A08.5)                                                                               | High          |
-| Floating versions without a lockfile on non-critical dependencies, absence of `lockfile-lint` in CI, webhook without verification on a low-impact action                                                                                                                   | Medium        |
-| `npm install` instead of `npm ci` in CI (lockfile present), absence of a vulnerability audit in CI (scanning present elsewhere in the pipeline)                                                                                                                            | Low           |
-| Absence of an internal registry (with no other gap), missing pipeline security documentation                                                                                                                                                                               | Informational |
+| Confirmed attacker-controlled native deserialization with an exploitable gadget path and severe impact, or confirmed code substitution in a privileged build or update path | Critical |
+| Attacker-influenceable mutable code reference in a privileged pipeline, unverified script executed in a trusted build, or mass assignment of a sensitive field with demonstrated impact | High |
+| Exposed mutable reference or unverified webhook with limited impact established by the call chain | Medium |
+| Floating version, missing lockfile, absent lockfile validation tool, or use of `npm install` with no demonstrated substitution path | Investigate; do not assign severity yet |
 
-**Amplification rule:** findings A08.1 (pipeline) and A08.2 (dependencies) are amplified by the effective privileges of the pipeline. A job with `contents: write` or access to the production registry turns a High finding into a Critical one.
+**Amplification rule:** findings A08.1 (pipeline) and A08.2 (dependencies) depend on the effective privileges of the pipeline. Write access or registry access raises the potential impact, but does not by itself make a finding Critical; establish the substitution path and affected assets.
 
 ---
 
@@ -433,7 +398,7 @@ app.post(
 
 ## Finding template for the report
 
-Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
+Use the finding block defined in `references/report-format.md`. Category-specific fields:
 
 - **Sub-type:** A08.X - [sub-type name]
 - **Severity justification:** [1 sentence; specify the effective privileges of the compromised entry point]
@@ -443,7 +408,7 @@ Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
 ## Limits of static analysis for A08
 
-- **Deserialization gadget chains**: detecting `unserialize()` on external data is possible statically. Confirming exploitability requires identifying the classes available in the execution context and analyzing their magic methods, an analysis that benefits from dedicated tools (phpggc, ysoserial).
+- **Deserialization gadget chains**: detecting `unserialize()` on external data is possible statically. Confirming exploitability requires identifying the classes available in the execution context and analyzing their special methods.
 - **Effective floating tags**: a tag such as `v4` may or may not point to a secure commit at the time of the audit, confirming this requires querying the GitHub/GitLab API to resolve the current SHA.
 - **Dependency confusion**: requires knowing the names of internal packages and verifying their absence from public registries, this cannot be determined from the code alone.
 - **Webhook signatures**: signature verification in the code may be correct but bypassed by a middleware that parses the body before the signature is checked (e.g., `express.json()` before `express.raw()`), this requires an analysis of the middleware chain.
