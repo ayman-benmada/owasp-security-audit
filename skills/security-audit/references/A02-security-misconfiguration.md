@@ -1,7 +1,7 @@
 # A02 - Security Misconfiguration
 
 **Reference framework:** OWASP Top 10 (2025), category A02
-**Main associated CWEs:** CWE-16, CWE-260, CWE-315, CWE-520, CWE-611, CWE-614, CWE-732, CWE-756, CWE-798, CWE-942, CWE-1004
+**Key CWEs:** CWE-16, CWE-260, CWE-315, CWE-489, CWE-526, CWE-547, CWE-611, CWE-614, CWE-776, CWE-942, CWE-1004
 **Finding format:** `OWASP-A02-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A02. It provides detection patterns, standard fixes, and the severity grid specific to security misconfigurations.
@@ -93,9 +93,11 @@ A02 contains many findings that are **defense-in-depth gaps** (e.g., a missing s
 
 ---
 
-### A02.2 - Hard-coded secrets
+### A02.2 - Secrets in configuration files and build artifacts
 
-**CWE-798** - Use of Hard-coded Credentials | **CWE-260** - Password in Configuration File
+**CWE-260** - Password in Configuration File | **CWE-547** - Use of Hard-coded, Security-relevant Constants | related: CWE-798 Use of Hard-coded Credentials
+
+> **Deduplication:** report a given secret once. Credentials hard-coded in source code used to authenticate to another system: A07.1 (CWE-798). Cryptographic keys and signing secrets: A04.5 (CWE-321). Secrets in configuration files, `.env` files, Dockerfiles, or images: here. Add `→ See also` mentions in the other categories.
 
 **Pattern:** passwords, API keys, encryption keys, authentication tokens, private certificates present in the source code, in versioned configuration files, or in Docker images.
 
@@ -106,7 +108,7 @@ A02 contains many findings that are **defense-in-depth gaps** (e.g., a missing s
 - `.env`, `application.properties`, `config.yml` files with real values rather than references to a vault.
 - `Dockerfile` with `ENV API_KEY=...` or `ARG SECRET=...` (`ARG` values appear in the image history).
 
-**Mandatory masking rule:** if a real secret is detected, **never reproduce it** in the report. Replace it with `[MASKED SECRET]` and report its presence as a separate finding.
+**Mandatory masking rule:** if a real secret is detected, **never reproduce its value**. Follow the secret-handling rules in `SKILL.md` (`[SECRET MASKED]`, type and location only).
 
 **Standard fix:** storage in a vault (HashiCorp Vault, AWS Secrets Manager, GitHub/GitLab Secrets for CI), injection at runtime via environment variables, secret scanner in the pipeline (gitleaks, trufflehog, GitHub secret scanning). Any secret exposed in Git must be considered **permanently compromised**; immediate rotation is mandatory.
 
@@ -114,9 +116,11 @@ A02 contains many findings that are **defense-in-depth gaps** (e.g., a missing s
 
 ---
 
-### A02.3 - Verbose error messages exposing the technology stack
+### A02.3 - Verbose error configuration exposing the technology stack
 
-**CWE-209** - Generation of Error Message Containing Sensitive Information | **CWE-756** - Missing Custom Error Page
+**CWE-16** - Configuration | related: CWE-209 Generation of Error Message Containing Sensitive Information and CWE-756 Missing Custom Error Page
+
+> **Deduplication:** when the root cause is a configuration switch (framework debug error pages, `display_errors=On`, version headers), report here. When application code returns exception details to the client (`err.stack`, `$e->getMessage()`), report under A10.1 and add `→ See also A02.3`.
 
 **Pattern:** the application returns stack traces, SQL queries, absolute paths, component versions, or framework error messages to the end user. The risk is not the error itself but the **level of detail** disclosed.
 
@@ -184,7 +188,7 @@ server {
 
 ### A02.5 - Misconfigured session cookies
 
-**CWE-614** - Sensitive Cookie Without Secure Attribute | **CWE-1004** - Sensitive Cookie Without HttpOnly Flag | **CWE-1275** - Sensitive Cookie with Improper SameSite Attribute
+**CWE-614** - Sensitive Cookie in HTTPS Session Without 'Secure' Attribute | **CWE-1004** - Sensitive Cookie Without 'HttpOnly' Flag | related: CWE-1275 Sensitive Cookie with Improper SameSite Attribute
 
 **Pattern:** a cookie carrying a session identifier or sensitive data does not carry the appropriate protection attributes.
 
@@ -218,7 +222,7 @@ res.cookie("session", token, {
 
 ### A02.6 - Missing or misconfigured HTTP security headers
 
-**CWE-693** - Protection Mechanism Failure
+**CWE-16** - Configuration | related: CWE-693 Protection Mechanism Failure and CWE-1021 Improper Restriction of Rendered UI Layers
 
 **Pattern:** absence or lax configuration of standard security headers. A defense-in-depth layer, rarely exploitable on its own, but amplifies any other flaw (XSS, clickjacking, SSL stripping).
 
@@ -289,21 +293,25 @@ server {
 
 **Often underestimated risk:** XML is used indirectly in document generation (PDF, reports), Office formats (DOCX/XLSX/PPTX), and especially **SVG**, which is treated as an image but is actually a full XML document. A malicious SVG file uploaded can trigger an XXE during a simple server-side resize.
 
-**Standard fix (PHP):**
+**Standard fix (PHP):** with libxml2 >= 2.9 (the norm since PHP 8.0), external entities are not loaded unless the code opts in. Flag calls that pass `LIBXML_NOENT` or `LIBXML_DTDLOAD` to `simplexml_load_string()`, `DOMDocument::loadXML()`, or `XMLReader` on untrusted input. On legacy stacks (PHP < 8.0 with older libxml2), `libxml_disable_entity_loader(true)` was required.
 
 ```php
-libxml_set_external_entity_loader(null);
+// ❌ Opts in to entity substitution on untrusted XML
+$doc = simplexml_load_string($xml, 'SimpleXMLElement', LIBXML_NOENT | LIBXML_DTDLOAD);
+
+// ✅ Default flags: no entity substitution, no DTD loading
+$doc = simplexml_load_string($xml);
 ```
 
-**Standard fix (Node.js, avoid XML parsing when possible, otherwise configure explicitly):** use libraries that do not execute external entities by default, and disable `resolveExternals` / `loadDTD`. Refer to the [OWASP XXE Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html) for the configuration specific to each language.
+**Other stacks:** Java (`DocumentBuilderFactory`, `SAXParserFactory`, `XMLInputFactory`) resolves external entities by default and must be hardened explicitly (for example `disallow-doctype-decl`). Python `lxml` should use `resolve_entities=False` (or `defusedxml`). In Node.js, `libxmljs` with `noent: true` is vulnerable. Refer to the [OWASP XXE Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html) for the configuration specific to each language.
 
-**Typical severity:** Critical (file reading, SSRF, DoS).
+**Typical severity:** 🟠 High to 🔴 Critical (local file read or SSRF via XXE); 🟡 Medium when only entity expansion DoS is possible.
 
 ---
 
 ### A02.8 - Overly permissive cloud permissions
 
-**CWE-732** - Incorrect Permission Assignment for Critical Resource | **CWE-942** - Permissive Cross-domain Policy with Untrusted Domains
+**CWE-16** - Configuration | related: CWE-732 Incorrect Permission Assignment for Critical Resource
 
 **Pattern:** a cloud resource configured with permissions broader than necessary: public S3 bucket, IAM policy with wildcards, security group open on `0.0.0.0/0`, publicly accessible database.
 
@@ -328,7 +336,7 @@ libxml_set_external_entity_loader(null);
 
 ### A02.9 - Default components not removed
 
-**CWE-1188** - Insecure Default Initialization | **CWE-756** - Missing Custom Error Page
+**CWE-1188** - Initialization of a Resource with an Insecure Default
 
 **Pattern:** example pages, default accounts, admin interfaces, or documentation shipped with a server or framework, left in place in production.
 
@@ -347,7 +355,7 @@ libxml_set_external_entity_loader(null);
 
 ### A02.10 - Absence of a reproducible hardening process
 
-**CWE-1053** - Missing Documentation for Design
+**CWE-16** - Configuration
 
 **Pattern:** the secure configuration exists but depends on human vigilance; there is no pipeline that validates it, no IaC, no regular audit. Risk of **drift over time**: a debug mode temporarily enabled and forgotten, a manually edited configuration file, a new framework version introducing an option left at its default.
 
@@ -366,7 +374,7 @@ libxml_set_external_entity_loader(null);
 
 ### A02.11 - Exposed build artifacts and sensitive files
 
-**CWE-540** - Inclusion of Sensitive Information in Source Code | **CWE-538** - Insertion of Sensitive Information into Externally-Accessible File
+**CWE-538** - Insertion of Sensitive Information into Externally-Accessible File | **CWE-540** - Inclusion of Sensitive Information in Source Code
 
 **Pattern:** files that should not reach production (source maps, test files, hidden files, dev dependencies) end up in the delivered artifacts.
 
@@ -391,6 +399,24 @@ location ~ /\. { deny all; }
 - Verify the actual contents of the artifact (`docker image inspect`, `npm pack --dry-run`) before deployment.
 
 **Typical severity:** High (exposed source maps, accessible `.env`) to Critical (accessible `.git/` allowing the repo to be cloned).
+
+---
+
+### A02.12 - Container and orchestration misconfiguration
+
+**CWE-16** - Configuration | related: CWE-250 Execution with Unnecessary Privileges
+
+> Applies only when container or orchestration files are in scope (`Dockerfile`, `compose.yaml`, Kubernetes manifests, Helm charts). These files describe intent; the running configuration may differ, so keep confidence at Medium or lower unless the deployment configuration is also provided.
+
+**Detection, look for:**
+
+- No `USER` instruction in the final Dockerfile stage (process runs as root), or `USER root`.
+- `privileged: true`, added capabilities (`cap_add: [SYS_ADMIN]`), `hostNetwork`/`hostPID`, or `securityContext.allowPrivilegeEscalation: true`.
+- The Docker socket mounted into a container (`/var/run/docker.sock`), which grants control of the host.
+- Database, cache, or admin ports published on all interfaces (`"5432:5432"` rather than `"127.0.0.1:5432:5432"`) in files used outside local development.
+- Secrets passed via `ENV`/`ARG` or committed Compose `environment:` values (report under A02.2).
+
+**Typical severity:** 🟡 Medium (root user, broad port exposure) to 🔴 Critical (Docker socket or privileged mode in a container exposed to untrusted input).
 
 ---
 
@@ -440,32 +466,11 @@ These principles guide recommendations regardless of the sub-type:
 
 ## Finding template for the report
 
-````
-**[OWASP-A02-NNN]** - [Short title]
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-- **Severity:** [level + icon]
-- **Confidence:** 🔵 High / 🟣 Medium / ⚪ Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence, mention whether the finding amplifies another known flaw]
 - **Sub-type:** A02.X - [sub-type name]
-- **Location:** [file:line / endpoint / cloud resource / server configuration]
-- **Description:** [explanation of the mechanism]
-- **Potential impact:** [what an attacker can do or facilitate]
-- **Evidence / Vulnerable example:**
-  ```[language/format]
-  // audited excerpt, secrets replaced with [MASKED SECRET]
-````
-
-- **Recommendation:** [concrete action]
-- **Remediation example:**
-  ```[language/format]
-  // fixed version
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A05:2021](https://owasp.org/Top10/A05_2021-Security_Misconfiguration/) | [OWASP XXE Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html) (if applicable)
-
-```
-
-> Note: OWASP renumbered Security Misconfiguration as A05 in the 2021 Top 10. In the 2025 framework used by this orchestrator, it is A02; the official OWASP URL remains that of the historical A05 sheet, which is the same category.
+- **Severity justification:** [1 sentence; specify whether the setting is active in the deployed configuration and whether it amplifies another known flaw]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A02:2025 - Security Misconfiguration](https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/) | [OWASP XXE Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html) (if applicable)
 
 ---
 
@@ -480,4 +485,3 @@ A02 is the category most dependent on the runtime context. Some flaws can only b
 - **Configuration drift over time**: by definition not detectable at a single point in time, detectable only through recurring audits.
 
 Mention these limitations in the "Limitations" section of the report when relevant, and suggest dynamic checks the user can run (with explicit validation, in accordance with the orchestrator's protocol).
-```

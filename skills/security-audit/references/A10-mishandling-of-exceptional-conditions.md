@@ -1,7 +1,7 @@
 # A10 - Mishandling of Exceptional Conditions
 
 **Reference framework:** OWASP Top 10 (2025) - category A10
-**Main associated CWEs:** CWE-248, CWE-280, CWE-390, CWE-391, CWE-392, CWE-393, CWE-394, CWE-395, CWE-396, CWE-397, CWE-460, CWE-544, CWE-584, CWE-600, CWE-636, CWE-754, CWE-755
+**Key CWEs:** CWE-209, CWE-248, CWE-252, CWE-280, CWE-390, CWE-391, CWE-396, CWE-397, CWE-460, CWE-476, CWE-478, CWE-484, CWE-636, CWE-754, CWE-755, CWE-756
 **Finding format:** `OWASP-A10-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A10. It provides the detection patterns, standard fixes, and severity grid specific to the mishandling of exceptional conditions.
@@ -83,7 +83,7 @@ For each `try/catch` block found, ask:
 
 **CWE-209** - Generation of Error Message Containing Sensitive Information | **CWE-755** - Improper Handling of Exceptional Conditions
 
-**Pattern:** an uncaught (or poorly caught) exception propagates up to the user, exposing the stack trace, the framework's name and version, the installation path, or the SQL query. This subtype overlaps with A02.3 - report under both categories if relevant.
+**Pattern:** an uncaught (or poorly caught) exception propagates up to the user, exposing the stack trace, the framework's name and version, the installation path, or the SQL query. OWASP maps CWE-209 to A10:2025. This subtype overlaps with A02.3: report code-level leaks here and configuration switches under A02.3, once, with a `→ See also` mention.
 
 **Detection - look for:**
 
@@ -142,13 +142,12 @@ function userCanAccess(userId, resourceId) {
 ```
 
 ```php
-// ❌ PHP variant - silent catch that lets execution continue
-function isAdmin($userId): bool {
+// ❌ PHP variant - the error is swallowed and a "safe-looking" default is returned
+function getUserRole(int $userId): string {
     try {
-        return AuthService::getRole($userId) === 'admin';
+        return AuthService::getRole($userId);
     } catch (\Exception $e) {
-        // Exception swallowed: the function implicitly returns false
-        // but the calling code may not check the return value
+        return 'user'; // ⚠️ a default role on error may still grant access the caller did not intend
     }
 }
 ```
@@ -296,7 +295,7 @@ try {
 
 ### A10.5 - Resources not released after an exception (resource leak)
 
-**CWE-584** - Return Inside Finally Block | **CWE-755** - Improper Handling of Exceptional Conditions
+**CWE-460** - Improper Cleanup on Thrown Exception | **CWE-772** - Missing Release of Resource after Effective Lifetime
 
 **Pattern:** a resource (file, database connection, network handle, stream) is opened and not released if an exception occurs before the `fclose()`/`close()`/`disconnect()` call. Repeated across many requests, this progressively exhausts the server's available descriptors, causing a denial of service.
 
@@ -342,7 +341,7 @@ stream.on("error", (err) => {
 stream.on("data", (chunk) => processChunk(chunk));
 ```
 
-**Multi-language equivalents:** `try-with-resources` (Java), `using` (C#/Python), `defer` (Go): these constructs guarantee the release automatically.
+**Multi-language equivalents:** `try-with-resources` (Java), `using` (C#), `with` (Python), `defer` (Go): these constructs guarantee the release automatically.
 
 **Typical severity:** 🟡 Medium (localized resource leak) to 🟠 High (leak on a frequently called endpoint that can lead to a DoS).
 
@@ -456,9 +455,9 @@ $user = User::where('email', $email)->firstOrFail();
 
 ### A10.8 - Default server error pages exposed
 
-**CWE-209** - Generation of Error Message Containing Sensitive Information
+**CWE-756** - Missing Custom Error Page | **CWE-209** - Generation of Error Message Containing Sensitive Information
 
-**Pattern:** the default error pages of the web server (Nginx, Apache, IIS) expose the server's name and version, making it easier to identify applicable CVEs. This subtype overlaps with A02.3 - report under both categories.
+**Pattern:** the default error pages of the web server (Nginx, Apache, IIS) expose the server's name and version, making it easier to identify applicable CVEs. This subtype overlaps with A02.3: report it once (here for missing custom error pages, CWE-756; under A02.3 for version headers), with a `→ See also` mention.
 
 **Detection - look for:**
 
@@ -500,7 +499,7 @@ server {
 2. **Differentiated exceptions** - catch exceptions at the most precise level possible, never an empty `catch (Exception e) {}` on critical code.
 3. **Never swallow an exception silently** - any empty `catch` or one with `// ignore` is suspect; log at minimum, alert if the context is sensitive.
 4. **Stack trace only in server logs** - never in the HTTP response to the client; provide a `tx_id` for correlation.
-5. **`finally` for resources** - every `open()`/`fopen()`/`connect()` must have a `finally` (or its equivalent `try-with-resources`, `using`, `defer`) guaranteeing release.
+5. **`finally` for resources** - every `open()`/`fopen()`/`connect()` must have a `finally` (or its equivalent `try-with-resources`, `using`, `with`, `defer`) guaranteeing release.
 6. **Atomic transactions** - any multi-step dependent operation wrapped in a transaction with automatic rollback on exception.
 7. **Return value checks** - any function returning `null`/`undefined`/`-1` must be followed by an explicit check or a call to the "or fail" variant (e.g., `firstOrFail()`).
 8. **`default` in every `switch`** - throwing an explicit exception on an unknown value, especially for values that can originate externally.
@@ -538,32 +537,11 @@ server {
 
 ## Finding template for the report
 
-````
-**[OWASP-A10-NNN]** - [Short title]
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-- **Severity:** [level + icon]
-- **Confidence:** 🔵 High / 🟣 Medium / ⚪ Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence, specify which logic is affected by the mishandled exception]
-- **Subtype:** A10.X - [subtype name]
-- **Location:** [file:line / function / endpoint]
-- **Description:** [explanation of the failing mechanism and the resulting inconsistent state]
-- **Potential impact:** [security bypass, inconsistent state, DoS, information leak]
-- **Evidence / Vulnerable example:**
-  ```[language]
-  // audited excerpt with the try/catch block or the missing error handling
-````
-
-- **Recommendation:** [fail closed, finally, transaction, return value check, etc.]
-- **Remediation example:**
-  ```[language]
-  // fixed version
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A10:2021 - Insufficient Logging and Monitoring](https://owasp.org/Top10/) | [OWASP Error Handling Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html)
-
-```
-
-> Note: Mishandling of Exceptional Conditions is a category from the 2025 framework. In the OWASP Top 10 2021, it does not exist as such; its themes are distributed across A05 (Security Misconfiguration) and other categories.
+- **Sub-type:** A10.X - [sub-type name]
+- **Severity justification:** [1 sentence; specify which logic is affected by the mishandled condition (security control, transaction, resource)]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A10:2025 - Mishandling of Exceptional Conditions](https://owasp.org/Top10/2025/A10_2025-Mishandling_of_Exceptional_Conditions/) | [OWASP Error Handling Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html)
 
 ---
 
@@ -576,4 +554,3 @@ server {
 - **Return values**: a function returning `null` can be used safely if the caller handles that case; trace the full flow before concluding.
 
 Mention these limitations in the report's "Limitations" section when relevant.
-```

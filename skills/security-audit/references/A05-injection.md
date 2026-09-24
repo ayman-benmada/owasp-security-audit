@@ -1,7 +1,7 @@
 # A05 - Injection
 
 **Reference framework:** OWASP Top 10 (2025), category A05
-**Main associated CWEs:** CWE-20, CWE-74, CWE-77, CWE-78, CWE-79, CWE-89, CWE-90, CWE-94, CWE-98, CWE-116, CWE-564, CWE-643, CWE-918, CWE-943
+**Key CWEs:** CWE-20, CWE-74, CWE-77, CWE-78, CWE-79, CWE-89, CWE-90, CWE-94, CWE-95, CWE-98, CWE-113, CWE-116, CWE-564, CWE-643, CWE-917
 **Finding format:** `OWASP-A05-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A05. It provides detection patterns, standard fixes, and the severity grid specific to injection flaws.
@@ -85,7 +85,7 @@ Second-order injections and unconventional sources (file metadata, third-party r
 
 ## Subtypes and detection patterns
 
-> The examples mainly use PHP and JavaScript/Node.js, staying faithful to the source document. **Transpose each pattern to the language and framework of the audited project.**
+> The examples mainly use PHP and JavaScript/Node.js. **Transpose each pattern to the language and framework of the audited project.**
 
 ---
 
@@ -241,9 +241,9 @@ exec("convert " . $escapedFile . " /tmp/out.png");
 **Fix, structured API without a shell (best practice):**
 
 ```php
-// ✅ Level 2: structured call without a shell interpreter
-$cmd = ['convert', $_GET['file'], '/tmp/out.png'];
-proc_open($cmd[0], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, $cmd);
+// ✅ Level 2: structured call without a shell interpreter (PHP >= 7.4 accepts an argument array)
+$cmd = ['convert', '--', $_GET['file'], '/tmp/out.png']; // '--' stops option parsing
+$process = proc_open($cmd, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
 ```
 
 ```javascript
@@ -253,7 +253,7 @@ execFile("convert", [userFile, "/tmp/out.png"], callback);
 // execFile does not interpret shell metacharacters
 ```
 
-**Note:** `escapeshellarg` significantly reduces the risk, but the best defense remains never going through a shell interpreter. Prefer APIs that take structured arguments.
+**Note:** `escapeshellarg` significantly reduces the risk, but the best defense remains never going through a shell interpreter. Prefer APIs that take structured arguments. Even without a shell, a user value starting with `-` can be interpreted as an option by the target program (argument injection, CWE-88): validate it or pass `--` where the program supports it.
 
 **Typical severity:** 🔴 Critical (RCE, arbitrary command execution on the server).
 
@@ -477,106 +477,7 @@ res.setHeader("Location", "/page?lang=" + lang);
 
 ---
 
-### A05.10 - SSRF (Server-Side Request Forgery)
-
-**CWE-918** - Server-Side Request Forgery
-
-**Pattern:** the application makes HTTP requests to a URL supplied or controlled by the user without validating the destination. The attacker forces the server to query internal infrastructure (cloud metadata service, unexposed services) or to exfiltrate data via out-of-band channels.
-
-**Detection, look for:**
-
-- HTTP calls using a URL originating from user input: `fetch(req.body.url)`, `axios.get(req.query.url)`, `file_get_contents($url)`, `HttpClient.get(request.url)`.
-- Import-from-URL features: remote avatar, configurable webhook, link preview, RSS/Atom feed.
-- PDF generation from HTML (wkhtmltopdf, Puppeteer) with templates containing URLs.
-- Uploaded SVGs (`<image>` tag, `<use href="...">`): the server resolves HTTP references during processing.
-- XML parsers with external entity resolution via HTTP (see A02.7 XXE).
-
-**Vulnerable code:**
-
-```javascript
-// ❌ Content proxy without validation - trivial SSRF
-app.post("/api/fetch-preview", requireAuth, async (req, res) => {
-  const { url } = req.body;
-  const response = await fetch(url); // ⚠️ can reach 169.254.169.254
-  res.json({ content: await response.text() });
-});
-```
-
-**Typical exploitation:**
-
-```
-# Stealing AWS IAM credentials
-POST /api/fetch-preview
-{"url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/role-name"}
-
-# GCP metadata
-{"url": "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"}
-
-# Access to an unexposed internal service
-{"url": "http://internal-admin.corp:8080/api/users"}
-
-# Internal port scanning
-{"url": "http://192.168.1.1:22"}
-```
-
-**Fix, domain allowlist + blocking private IPs:**
-
-```javascript
-// ✅ Strict validation before any external request
-const { URL } = require("url");
-const dns = require("dns").promises;
-
-const ALLOWED_DOMAINS = new Set(["api.trusted-service.com", "uploads.cdn.com"]);
-
-const PRIVATE_RANGES = [
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2[0-9]|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^::1$/,
-  /^fc00:/,
-  /^fe80:/,
-];
-
-async function safeFetch(rawUrl) {
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error("Invalid URL");
-  }
-
-  // Allowed protocols only
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    throw new Error("Protocol not allowed");
-  }
-
-  // Domain allowlist (exact match)
-  if (!ALLOWED_DOMAINS.has(parsed.hostname)) {
-    throw new Error("Domain not allowed");
-  }
-
-  // DNS resolution + anti-rebinding check (before connecting)
-  const addresses = await dns.resolve4(parsed.hostname);
-  for (const ip of addresses) {
-    if (PRIVATE_RANGES.some((r) => r.test(ip))) {
-      throw new Error("Private destination forbidden");
-    }
-  }
-
-  // No automatic redirect following (could bypass validation)
-  return fetch(rawUrl, { redirect: "manual" });
-}
-```
-
-**Note on DNS rebinding:** DNS resolution must be performed _before_ the connection AND the same IP must be used to establish the connection; a short TTL can make the DNS point to `169.254.169.254` between the validation and the request if the two are separated in time.
-
-**Typical severity:** 🔴 Critical (access to cloud metadata means theft of IAM/service-account credentials, access to internal services) to 🟠 High (blind SSRF without direct exfiltration).
-
----
-
-### A05.11 - NoSQL injection
+### A05.10 - NoSQL injection
 
 **CWE-943** - Improper Neutralization of Special Elements in Data Query Logic
 
@@ -637,14 +538,14 @@ app.post("/api/login", async (req, res) => {
 **Other points to check:**
 
 - MongoDB `$where` and `mapReduce` with user input (server-side JavaScript execution).
-- Mongoose `sanitize` plugin not installed (protects against injected operators).
+- No operator filtering on query inputs: Mongoose `sanitizeFilter` option (Mongoose 6+) or `mongoSanitize()` from `express-mongo-sanitize` not used, and no type validation.
 - Redis `EVAL` with dynamically built scripts.
 
 **Typical severity:** 🔴 Critical (authentication bypass, unconditional access to all data).
 
 ---
 
-### A05.12 - GraphQL abuse (injection, introspection, complexity-based DoS)
+### A05.11 - GraphQL abuse (injection, introspection, complexity-based DoS)
 
 **CWE-89, CWE-400** - Injection / Uncontrolled Resource Consumption
 
@@ -729,16 +630,15 @@ const server = new ApolloServer({
     depthLimit(5), // max depth of 5 levels
     createComplexityLimitRule(1000), // max complexity of 1000
   ],
-  context: ({ req }) => ({
-    user: verifyToken(req.headers.authorization),
-  }),
 });
+// Apollo Server 4+: build the per-request user in the `context` function passed to
+// startStandaloneServer() or expressMiddleware(), e.g. context: async ({ req }) => ({ user: await verifyToken(req) })
 
 // In every sensitive resolver
 Mutation: {
   deleteUser: async (_, { id }, { user }) => {
     if (!user || user.role !== "admin")
-      throw new ForbiddenError("Access denied");
+      throw new GraphQLError("Access denied", { extensions: { code: "FORBIDDEN" } });
     return User.findByIdAndDelete(id);
   };
 }
@@ -754,9 +654,9 @@ Mutation: {
 
 ---
 
-### A05.13 - Prompt Injection (applications integrating an LLM)
+### A05.12 - Prompt Injection (applications integrating an LLM)
 
-**CWE-77** - Improper Neutralization of Special Elements used in a Command
+**CWE-1427** - Improper Neutralization of Input Used for LLM Prompting | see also [OWASP Top 10 for LLM Applications - LLM01 Prompt Injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
 
 > **Do not evaluate this section if the application does not integrate an LLM.** Signal: `openai`, `anthropic`, `langchain`, `mistral`, `ollama` imports in the dependencies.
 
@@ -787,10 +687,10 @@ const action = await llm.complete(
 await executeAction(action); // direct execution without validation
 ```
 
-**Fix, role separation + output validation:**
+**Mitigation, role separation + least privilege + output validation:**
 
 ```javascript
-// ✅ API with separated roles (system vs user) - cryptographic boundary
+// ✅ Separate system and user roles (reduces, but does not prevent, prompt injection)
 async function chat(userMessage) {
   // Validate and limit the input
   if (typeof userMessage !== "string" || userMessage.length > 2000) {
@@ -801,7 +701,7 @@ async function chat(userMessage) {
     model: "gpt-4o",
     messages: [
       { role: "system", content: "You are a financial assistant..." }, // never controlled by the user
-      { role: "user", content: userMessage }, // cryptographically separated from the system prompt
+      { role: "user", content: userMessage }, // still untrusted: the model may follow instructions in it
     ],
     max_tokens: 500,
   });
@@ -825,9 +725,9 @@ async function chat(userMessage) {
 - RAG systems where third-party document content is injected into the context.
 - Email or web page summarization: the content may contain adversarial instructions.
 
-**Defense principles:**
+**Defense principles:** no current technique reliably prevents prompt injection. The goal is to limit what a successful injection can do.
 
-1. Strictly separate `system` and `user` (never mix them into a single string).
+1. Separate `system` and `user` content (never mix them into a single string); treat model output as untrusted input.
 2. Least privilege on tools: grant the LLM only the permissions it needs.
 3. Human validation (or rule-based validation) for any irreversible action triggered by the LLM.
 4. Never directly execute the LLM's output as code or as a command.
@@ -848,10 +748,9 @@ async function chat(userMessage) {
 8. **Contextual output encoding**, HTML: `htmlspecialchars` / `textContent`; URL: `urlencode` / `encodeURIComponent`; JS: JSON.stringify or a dedicated library; CSS: avoid dynamic values.
 9. **Input validation on the way in, encoding on the way out**, validation alone is not enough; encoding appropriate to the output context is essential.
 10. **Least privilege on interpreters**, a database account with only the necessary rights (no `DROP`, `ALTER`, global access); system processes running as a dedicated non-root user.
-11. **SSRF: domain allowlist + blocking private IPs + DNS resolution before connecting**, `redirect: 'manual'` so automatic redirects are not followed.
-12. **NoSQL: strict type validation on input**, reject any field that is not a primitive (string, number, boolean) before any query. Use the ORM's typed methods (Mongoose, Prisma), never `$queryRawUnsafe` nor `where()` with JavaScript.
-13. **GraphQL: depth limit + complexity limit + introspection disabled in prod**, authorization checked in every resolver, never only at the HTTP layer.
-14. **LLM/Prompt injection: separate `system` and `user`**, never build the system prompt by concatenation with user data. Least privilege on the LLM's tools. Human validation for irreversible actions.
+11. **NoSQL: strict type validation on input**, reject any field that is not a primitive (string, number, boolean) before any query. Use the ORM's typed methods (Mongoose, Prisma), never `$queryRawUnsafe` nor `where()` with JavaScript.
+12. **GraphQL: depth limit + complexity limit + introspection disabled in prod**, authorization checked in every resolver, never only at the HTTP layer.
+13. **LLM/Prompt injection: limit the blast radius**, separate `system` and `user` content, least privilege on the LLM's tools, human validation for irreversible actions, and treat model output as untrusted.
 
 ---
 
@@ -859,13 +758,13 @@ async function chat(userMessage) {
 
 | Finding criteria                                                                                                                                                                                                                             | Severity         |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| Unauthenticated SQL injection on sensitive data, RCE (command injection, SSTI, eval, RFI), LFI on sensitive files, second-order SQL injection in a critical batch job, SSRF to cloud metadata, NoSQL auth bypass, GraphQL resolver injection | 🔴 Critical      |
-| SQL injection with auth but access to all data, stored XSS on a sensitive page, CRLF injection enabling session hijacking, raw ORM injection, blind SSRF without direct exfiltration, GraphQL without depth/complexity limit                 | 🟠 High          |
+| Unauthenticated SQL injection on sensitive data, RCE (command injection, SSTI, eval, RFI), LFI on sensitive files, second-order SQL injection in a critical batch job, NoSQL auth bypass, GraphQL resolver injection | 🔴 Critical      |
+| SQL injection with auth but access to all data, stored XSS on a sensitive page, CRLF injection enabling session hijacking, raw ORM injection, GraphQL without depth/complexity limit                 | 🟠 High          |
 | Reflected XSS without an exposed session token, CRLF injection on a non-critical header, SQL injection with impact limited by the database account's rights, GraphQL introspection in prod, prompt injection without sensitive tools         | 🟡 Medium        |
 | Reflected XSS in a hard-to-reach context or with minimal impact, missing output encoding on non-sensitive data                                                                                                                               | 🟢 Low           |
 | `eval()` on controlled data in a sandboxed context with no demonstrable impact, LLM without tools but with unvalidated response                                                                                                              | ℹ️ Informational |
 
-**Escalation rule:** always assess the actual impact in light of the privileges of the targeted interpreter. An SQL injection on a `SELECT`-only account is less critical than an injection on a `db_owner` account. A command injection on a root process is always Critical. An SSRF to a cloud metadata endpoint is Critical because it exposes IAM/service-account credentials that can compromise the entire infrastructure.
+**Escalation rule:** always assess the actual impact in light of the privileges of the targeted interpreter. An SQL injection on a `SELECT`-only account is less critical than an injection on a `db_owner` account. A command injection on a root process is always Critical.
 
 ---
 
@@ -878,40 +777,18 @@ async function chat(userMessage) {
 | Template string in a query                   | May use typed values (`parseInt`, enum cast) reducing the risk of SQL injection       | Check whether a strict cast is applied before interpolation             |
 | `exec()` / `system()` with a variable        | The variable may come from a list of validated options (whitelist)                    | Check whether whitelist validation is applied before the call           |
 | XSS: `innerHTML = variable`                  | The variable may be escaped or come from a safe internal source                       | Check the variable's origin and whether a sanitizer is applied          |
-| SSRF: `fetch(url)` with a variable           | The URL may be built from a list of authorized endpoints (allowlist)                  | Check whether URL validation or a domain allowlist is present           |
-| Prompt injection: user input sent to the LLM | Acceptable if the system prompt clearly isolates instructions from user data          | Check the prompt's structure, separation of instructions from user data |
+| Prompt injection: user input sent to the LLM | Low impact if the model has no tools, no sensitive context, and its output is not executed | Check which tools, data, and downstream actions the model output can reach |
 
 ---
 
 ## Finding template for the report
 
-````
-**[OWASP-A05-NNN]** - [Short title]
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-- **Severity:** [level + icon]
-- **Confidence:** 🔵 High / 🟣 Medium / ⚪ Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence, specify the targeted interpreter and the effective privileges]
-- **Subtype:** A05.X - [subtype name]
-- **Location:** [file:line / function / endpoint]
-- **Description:** [injection mechanism and context]
-- **Potential impact:** [accessible data, executable commands, affected scope]
-- **Evidence / Vulnerable example:**
-  ```[language]
-  // audited excerpt with the vulnerable pattern
-````
-
-- **Illustrative payload:** [example payload exploiting the flaw, without a destructive payload]
-- **Recommendation:** [protection mechanism appropriate to the context]
-- **Remediation example:**
-  ```[language]
-  // fixed version
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A03:2021](https://owasp.org/Top10/A03_2021-Injection/) | [OWASP Injection Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html)
-
-```
-
-> Note: Injection corresponds to A03 in the OWASP Top 10 2021. In this orchestrator's 2025 framework, it is A05.
+- **Sub-type:** A05.X - [sub-type name]
+- **Severity justification:** [1 sentence; specify the targeted interpreter, the untrusted source, and the effective privileges of the interpreter]
+- **Illustrative payload:** [non-destructive example showing how the input reaches the sink]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A05:2025 - Injection](https://owasp.org/Top10/2025/A05_2025-Injection/) | [OWASP Injection Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html)
 
 ---
 
@@ -924,4 +801,3 @@ async function chat(userMessage) {
 - **SSTI in complex engines**: some template engines have configurable sandbox mechanisms; the actual exploitability depends on the runtime configuration, not only on the code.
 
 Mention these limitations in the report's "Limitations" section and propose the relevant dynamic verifications with explicit validation.
-```

@@ -1,7 +1,7 @@
 # A07: Authentication Failures
 
 **Reference:** OWASP Top 10 (2025), category A07
-**Main associated CWEs:** CWE-255, CWE-259, CWE-287, CWE-295, CWE-306, CWE-307, CWE-308, CWE-330, CWE-340, CWE-345, CWE-346, CWE-347, CWE-384, CWE-521, CWE-522, CWE-601, CWE-613, CWE-620, CWE-640
+**Key CWEs:** CWE-259, CWE-287, CWE-295, CWE-306, CWE-307, CWE-308, CWE-346, CWE-384, CWE-521, CWE-613, CWE-620, CWE-640, CWE-798, CWE-1390, CWE-1391
 **Finding format:** `OWASP-A07-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A07. It provides detection patterns, standard fixes, and the severity grid specific to authentication failures.
@@ -61,7 +61,7 @@ Identify all endpoints that verify or establish an identity:
 
 ### 4. Cross-reference with A01
 
-An A07 finding (authentication bypassed) combined with an A01 finding (insufficient access control once authenticated) multiplies the impact. Report both categories if relevant.
+An A07 finding (authentication bypassed) combined with an A01 finding (insufficient access control once authenticated) multiplies the impact. Report each as its own finding in its own category and cross-reference them.
 
 ---
 
@@ -71,9 +71,9 @@ An A07 finding (authentication bypassed) combined with an A01 finding (insuffici
 
 ---
 
-### A07.1: Default Credentials in Production
+### A07.1: Default and Hard-coded Credentials
 
-**CWE-259**: Use of Hard-coded Password | **CWE-255**: Credentials Management Errors
+**CWE-798**: Use of Hard-coded Credentials | **CWE-259**: Use of Hard-coded Password | **CWE-1392**: Use of Default Credentials
 
 **Pattern:** predefined accounts with known credentials (`admin/admin`, `root/root`, `test/test`) ship with the application and are never changed before going into production. These credentials are often publicly documented.
 
@@ -84,6 +84,7 @@ An A07 finding (authentication bypassed) combined with an A01 finding (insuffici
 - Test or demo accounts present in the codebase with no removal mechanism for production.
 - Absence of a "first login" mechanism forcing a password change on first connection.
 - Third-party management interfaces (databases, monitoring, CI/CD) with default credentials left unchanged.
+- Credentials hard-coded in source code to authenticate to databases, APIs, or other services (`password = "..."`, connection strings with inline passwords, API tokens in code). Never reproduce the value; follow the secret-handling rules in `SKILL.md`. Secrets in configuration files are covered by A02.2 and cryptographic keys by A04.5: report each secret once.
 
 **Standard fix:**
 
@@ -163,7 +164,9 @@ public function login(Request $request)
 }
 ```
 
-**Note:** this same endpoint is often the target of business logic abuse (A06.2). If rate limiting is absent, report both categories.
+**Note:** this same endpoint is often the target of business logic abuse (A06.2). Report missing login throttling once, here, and add `→ See also A07.2` in A06 if relevant.
+
+**Design caution:** account-based lockout lets an attacker lock out legitimate users. Prefer progressive delays or CAPTCHA challenges over hard lockout, and combine per-account and per-IP limits.
 
 **Typical severity:** 🔴 Critical (credential stuffing against an unprotected endpoint).
 
@@ -219,9 +222,9 @@ if (!user || !valid) {
 
 ### A07.4: Inadequate Password Storage
 
-**CWE-256**: Plaintext Storage | **CWE-916**: Use of Password Hash With Insufficient Computational Effort
+**CWE-916**: Use of Password Hash With Insufficient Computational Effort | **CWE-256**: Plaintext Storage of a Password
 
-**Pattern:** passwords stored in plaintext, reversibly encrypted, or hashed with a fast algorithm (MD5, SHA-1, SHA-256) with or without a salt. This subtype overlaps with A04.3; report it in both categories.
+**Pattern:** passwords stored in plaintext, reversibly encrypted, or hashed with a fast algorithm (MD5, SHA-1, SHA-256) with or without a salt. This subtype overlaps with A04.3: report it once, under A04.3 (weak hashing) or A06.5 (reversible storage by design), and add `→ See also A07.4` here.
 
 **Detection - look for:**
 
@@ -236,7 +239,7 @@ if (!user || !valid) {
 
 ### A07.5: Faulty Session Management
 
-**CWE-384**: Session Fixation | **CWE-613**: Insufficient Session Expiration | **CWE-522**: Insufficiently Protected Credentials
+**CWE-384**: Session Fixation | **CWE-613**: Insufficient Session Expiration
 
 **Pattern:** the session is poorly managed after authentication: identifier not regenerated, not invalidated, exposed in the URL, or persisting indefinitely.
 
@@ -371,9 +374,9 @@ Route::prefix('admin')
 
 ### A07.8: Incorrect JWT Validation
 
-**CWE-345**: Insufficient Verification of Data Authenticity | **CWE-347**: Improper Verification of Cryptographic Signature
+**CWE-287**: Improper Authentication | related: CWE-347 Improper Verification of Cryptographic Signature, CWE-345
 
-**Pattern:** a JWT is partially validated (signature checked but functional claims ignored) or not validated at all. This subtype overlaps with A04.6; report it in both categories.
+**Pattern:** a JWT is partially validated (signature checked but functional claims ignored) or not validated at all. This subtype overlaps with A04.6: report a missing or bypassable signature check once under A04.6, and missing claim validation (`exp`, `iss`, `aud`) here.
 
 **Detection - look for:**
 
@@ -479,7 +482,7 @@ private string $password;
 
 ### A07.11: OAuth 2.0 / OIDC Vulnerabilities
 
-**CWE-346**: Origin Validation Error | **CWE-601**: URL Redirection to Untrusted Site | **CWE-345**: Insufficient Verification of Data Authenticity
+**CWE-346**: Origin Validation Error | **CWE-287**: Improper Authentication | related: CWE-601 URL Redirection to Untrusted Site
 
 **Pattern:** OAuth 2.0 and OIDC are complex protocols with many implementation points. The most frequent errors involve the absence of the `state` parameter (OAuth CSRF), the absence of PKCE (authorization code interception), lax validation of redirect URIs (open redirect), and failure to validate `id_token` claims.
 
@@ -525,7 +528,7 @@ const codeChallenge = crypto
   .update(codeVerifier)
   .digest("base64url");
 
-req.session.codeVerifier = codeVerifier; // stored server-side or in encrypted localStorage
+req.session.codeVerifier = codeVerifier; // BFF/server-side example; a pure SPA keeps it in sessionStorage for the duration of the flow
 
 const authUrl = buildAuthUrl({
   clientId,
@@ -613,7 +616,7 @@ const authUrl = buildAuthUrl({
   scope: "openid profile",
 });
 
-// Good: random nonce generated, hashed into the id_token, verified at the callback
+// Good: random nonce generated, echoed back in the id_token by the provider, verified at the callback
 const nonce = crypto.randomBytes(32).toString("hex");
 req.session.oauthNonce = nonce;
 const authUrl = buildAuthUrl({
@@ -694,34 +697,13 @@ const authUrl = buildAuthUrl({
 
 ---
 
-## Finding Template for the Report
+## Finding template for the report
 
-````
-**[OWASP-A07-NNN]** - [Short title]
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-- **Severity:** [level + icon]
-- **Confidence:** 🔵 High / 🟣 Medium / ⚪ Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence, specify the impact on the authentication chain]
-- **Subtype:** A07.X - [subtype name]
-- **Location:** [file:line / endpoint / configuration]
-- **Description:** [mechanism of the failure and how it is exploitable]
-- **Potential impact:** [identity theft, account takeover, unauthorized access]
-- **Evidence / Vulnerable example:**
-  ```[language]
-  // audited excerpt
-````
-
-- **Recommendation:** [concrete action]
-- **Remediation example:**
-  ```[language]
-  // fixed version
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A07:2021](https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/) | [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
-
-```
-
-> Note: Authentication Failures corresponds to A07 in the OWASP Top 10 2021. In this orchestrator's 2025 reference, it remains A07.
+- **Sub-type:** A07.X - [sub-type name]
+- **Severity justification:** [1 sentence; specify the impact on the authentication chain (who can authenticate as whom)]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A07:2025 - Authentication Failures](https://owasp.org/Top10/2025/A07_2025-Authentication_Failures/) | [OWASP Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)
 
 ---
 
@@ -735,4 +717,3 @@ const authUrl = buildAuthUrl({
 - **Cloud / SSO policies**: the propagation of logout in an SSO context depends on the identity providers' configuration, which is not visible from the application code alone.
 
 Mention these limitations in the "Limitations" section of the report and propose the relevant dynamic checks with explicit validation.
-```

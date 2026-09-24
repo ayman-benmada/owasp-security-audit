@@ -1,21 +1,22 @@
 {
   "name": "owasp-security-audit",
   "version": "1.0.0",
-  "description": "OWASP Top 10 (2025) application security audit. Stack-aware scanning for injection, access control, auth, secrets, SSRF, and more. Docker-aware runtime checks only with your approval. Structured report with severity, Quick Wins, and concrete fixes. No invented findings; secrets always masked.",
+  "description": "Audits your codebase against the OWASP Top 10:2025 and produces a prioritized security report. Adapts to your stack, rates severity and confidence separately, masks secrets, and asks before running any command.",
   "author": {
     "name": "Ayman BENMADA"
   },
   "homepage": "https://github.com/ayman-benmada/owasp-security-audit",
   "repository": "https://github.com/ayman-benmada/owasp-security-audit",
+  "license": "MIT",
   "keywords": [
     "owasp",
     "owasp-top-10",
     "security",
     "security-audit",
+    "appsec",
+    "code-review",
     "vulnerability",
-    "injection",
-    "access-control",
-    "code-review"
+    "static-analysis"
   ],
   "logo": "assets/logo.png",
   "skills": "skills/"

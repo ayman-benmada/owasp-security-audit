@@ -1,7 +1,7 @@
 # A03: Software Supply Chain Failures
 
 **Reference:** OWASP Top 10 (2025), category A03
-**Main associated CWEs:** CWE-494, CWE-506, CWE-829, CWE-830, CWE-937, CWE-1104
+**Key CWEs:** CWE-1104, CWE-1329, CWE-1357, CWE-1395
 **Finding format:** `OWASP-A03-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A03. It provides the detection patterns, standard fixes, and the severity grid specific to software supply chain failures.
@@ -33,7 +33,7 @@ Before declaring an A03 finding, verify that **the vulnerable dependency is actu
 **Cases where the finding should be downgraded or dismissed:**
 
 - The CVE concerns a feature of the dependency that is not used in this project
-- The vulnerable dependency is only present in `devDependencies` and is not included in the production bundle
+- The vulnerable dependency is only present in `devDependencies` and is not included in the production bundle (this lowers runtime exposure only: dev dependencies still execute on developer machines and in CI, so a malicious package remains a risk there)
 - A lock file (`package-lock.json`, `yarn.lock`, `composer.lock`) is present and fixes the version: the risk is limited to the locked version
 - The vulnerability requires specific network access or a configuration that is absent from this project
 
@@ -65,13 +65,13 @@ A03 contains many findings that are **organizational weaknesses** (no lockfile, 
 
 ## Sub-types and Detection Patterns
 
-> The examples below use the Node.js/npm ecosystem since it is the main context of the audited project. **Transpose each pattern to the actual ecosystem in use**: the Composer (PHP), pip (Python), Maven/Gradle (Java), Go modules, and Bundler (Ruby) equivalents are noted where relevant.
+> The examples below use the Node.js/npm ecosystem for readability. **Transpose each pattern to the actual ecosystem in use**: the Composer (PHP), pip (Python), Maven/Gradle (Java), Go modules, and Bundler (Ruby) equivalents are noted where relevant.
 
 ---
 
 ### A03.1: Known Vulnerable Components
 
-**CWE-937**: OWASP Top Ten 2013 Category A9 - Using Components with Known Vulnerabilities | **CWE-1104**: Use of Unmaintained Third Party Components
+**CWE-1395**: Dependency on Vulnerable Third-Party Component | **CWE-1104**: Use of Unmaintained Third Party Components
 
 **Pattern:** the application integrates third-party components with known, unpatched CVEs. This can result from a lack of vigilance or from a deliberate decision (compatibility constraints).
 
@@ -86,7 +86,7 @@ A03 contains many findings that are **organizational weaknesses** (no lockfile, 
 
 **Note on accepted decisions:** a vulnerable version intentionally kept for compatibility reasons must be documented (accepted risk, remediation plan, compensating measures). Its absence is itself a finding.
 
-**Standard fix:** `npm audit fix`, update to the patched version, or replacement with a maintained alternative. If the update is blocking, formally document the accepted risk along with a review date.
+**Standard fix:** update to the patched version (for example with `npm audit fix`, run by the project team, not by the auditor), or replace with a maintained alternative. If the update is blocking, formally document the accepted risk along with a review date.
 
 **Typical severity:** 🔴 Critical (critical CVE remotely exploitable without authentication) to 🟡 Medium (local or low-impact CVE).
 
@@ -94,7 +94,7 @@ A03 contains many findings that are **organizational weaknesses** (no lockfile, 
 
 ### A03.2: Lack of Visibility into Transitive Dependencies
 
-**CWE-829**: Inclusion of Functionality from Untrusted Control Sphere
+**CWE-1357**: Reliance on Insufficiently Trustworthy Component
 
 **Pattern:** only direct dependencies are audited. The actual graph, often 10x larger, remains opaque. Deep vulnerabilities in the dependency tree go unnoticed.
 
@@ -111,13 +111,13 @@ A03 contains many findings that are **organizational weaknesses** (no lockfile, 
 
 ### A03.3: Unpinned Versions (Floating Dependencies)
 
-**CWE-494**: Download of Code Without Integrity Check
+**CWE-1357**: Reliance on Insufficiently Trustworthy Component | related: CWE-494 Download of Code Without Integrity Check
 
 **Pattern:** dependencies are declared with flexible version operators (`^`, `~`, `latest`, `*`), allowing a different version, potentially malicious or vulnerable, to be installed on every build without any visible change to the source code.
 
 **Vulnerable code:**
 
-```json
+```jsonc
 // ❌ package.json - floating versions
 {
   "dependencies": {
@@ -129,7 +129,7 @@ A03 contains many findings that are **organizational weaknesses** (no lockfile, 
 
 **Fix:**
 
-```json
+```jsonc
 // ✅ package.json - pinned versions
 {
   "dependencies": {
@@ -157,7 +157,7 @@ npm ci
 
 ### A03.4: Absence of an SBOM (Software Bill of Materials)
 
-**CWE-494**: Download of Code Without Integrity Check
+**CWE-1357**: Reliance on Insufficiently Trustworthy Component
 
 **Pattern:** no exhaustive inventory of components is generated and maintained. In the event of a compromise, it is impossible to quickly determine which systems are affected.
 
@@ -177,7 +177,7 @@ npm ci
 docker build -t myapp:1.2.3 .
 
 # 3. Generate the SBOM on the final image (not on the source folder)
-syft packages myapp:1.2.3 -o cyclonedx-json > sbom.json
+syft myapp:1.2.3 -o cyclonedx-json > sbom.json
 
 # 4. Sign the image and attach the SBOM
 cosign sign --yes myapp:1.2.3
@@ -197,7 +197,7 @@ cosign verify myapp:1.2.3 \
 
 ### A03.5: Absence of Vulnerability Scanning in CI and After Deployment
 
-**CWE-937**: Using Components with Known Vulnerabilities
+**CWE-1395**: Dependency on Vulnerable Third-Party Component
 
 **Pattern:** no automated tool blocks the build over known vulnerabilities, and no system monitors new CVEs after deployment. A vulnerability published against a dependency of an application deployed 6 months ago will not trigger any alert.
 
@@ -224,7 +224,7 @@ cosign verify myapp:1.2.3 \
 grype sbom:./sbom.json --fail-on high
 
 # Send the SBOM to Dependency-Track for continuous monitoring
-curl -X PUT https://dtrack.interne.exemple.com/api/v1/bom \
+curl -X PUT https://dtrack.internal.example.com/api/v1/bom \
   -H "X-Api-Key: $DT_API_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"project\": \"uuid\", \"bom\": \"$(base64 -w 0 sbom.json)\"}"
@@ -238,7 +238,7 @@ curl -X PUT https://dtrack.interne.exemple.com/api/v1/bom \
 
 ### A03.6: Insufficiently Secured CI/CD Pipeline
 
-**CWE-829**: Inclusion of Functionality from Untrusted Control Sphere | **CWE-732**: Incorrect Permission Assignment for Critical Resource
+**CWE-1357**: Reliance on Insufficiently Trustworthy Component | related: CWE-829, CWE-732
 
 **Pattern:** the pipeline has privileged access (secrets, registries, production environments) but is secured with less rigor than the application itself. A compromised pipeline can modify artifacts, exfiltrate secrets, or deploy malicious code while bypassing every application-level control.
 
@@ -295,7 +295,7 @@ jobs:
 
 ### A03.7: Compromise via Typosquatting
 
-**CWE-506**: Embedded Malicious Code | **CWE-830**: Inclusion of Web Functionality from an Untrusted Source
+**CWE-1357**: Reliance on Insufficiently Trustworthy Component | related: CWE-506 Embedded Malicious Code
 
 **Pattern:** an attacker publishes a package whose name imitates a legitimate library (e.g., `lodahs` instead of `lodash`, `expres` instead of `express`). A typo when declaring a dependency silently installs the malicious package.
 
@@ -310,7 +310,7 @@ jobs:
 
 - Carefully verify package names before declaring any dependency.
 - Use an internal proxy registry that only allows approved packages.
-- Regularly audit dependencies' `postinstall` scripts: `npm audit` and `npm install --ignore-scripts` (when compatible) reduce the automatic execution surface.
+- Regularly review dependencies' install scripts (`npm query ":attr(scripts, [postinstall])"` lists them); install with `--ignore-scripts` where compatible. Note that `npm audit` only reports known advisories, it does not inspect install scripts.
 
 **Typical severity:** 🔴 Critical (arbitrary code execution upon installation).
 
@@ -335,7 +335,7 @@ jobs:
 
 ### A03.9: Uncontrolled IDE Extensions and Development Tools
 
-**CWE-829**: Inclusion of Functionality from Untrusted Control Sphere
+**CWE-1357**: Reliance on Insufficiently Trustworthy Component
 
 **Pattern:** IDE extensions often carry broad permissions on the host system (access to source code, SSH tokens, configuration files) and rarely receive the same level of scrutiny as application dependencies. A compromised extension can inject code, intercept secrets, or exfiltrate data.
 
@@ -391,32 +391,13 @@ jobs:
 
 ---
 
-## Finding Template for the Report
+## Finding template for the report
 
-````
-**[OWASP-A03-NNN]** - [Short title]
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-- **Severity:** [level + icon]
-- **Confidence:** 🔵 High / 🟣 Medium / ⚪ Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence]
 - **Sub-type:** A03.X - [sub-type name]
-- **Location:** [file / CI step / Docker image / extension]
-- **Description:** [explanation of the mechanism]
-- **Potential impact:** [what an attacker can do]
-- **Evidence / Vulnerable example:**
-  ```[language/format]
-  // audited excerpt
-````
-
-- **Recommendation:** [concrete action]
-- **Remediation example:**
-  ```[language/format]
-  // fixed version
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A03:2025 - Software Supply Chain Failures](https://owasp.org/Top10/)
-
-```
+- **Severity justification:** [1 sentence; specify whether the affected component or pipeline step actually reaches production or has access to secrets]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A03:2025 - Software Supply Chain Failures](https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/) | [OWASP Software Supply Chain Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Software_Supply_Chain_Security_Cheat_Sheet.html)
 
 ---
 
@@ -431,4 +412,3 @@ A03 is particularly dependent on the state of the runtime and of external system
 - **Effective pipeline permissions**: workflow files declare the requested permissions, but the secrets actually accessible depend on the organization's GitHub/GitLab configuration.
 
 Mention these limitations in the "Limitations" section of the report and propose the relevant dynamic verification commands (with explicit validation, in accordance with the orchestrator's protocol).
-```

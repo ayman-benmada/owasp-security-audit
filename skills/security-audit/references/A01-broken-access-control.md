@@ -1,10 +1,12 @@
 # A01 - Broken Access Control
 
 **Reference framework:** OWASP Top 10 (2025), category A01
-**Main associated CWEs:** CWE-284, CWE-285, CWE-639, CWE-22, CWE-352, CWE-862, CWE-863, CWE-732, CWE-285
+**Key CWEs:** CWE-22, CWE-200, CWE-284, CWE-285, CWE-352, CWE-601, CWE-639, CWE-732, CWE-862, CWE-863, CWE-918, CWE-1275
 **Finding format:** `OWASP-A01-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A01. It provides detection patterns, standard fixes, and the severity grid specific to access control.
+
+**Note:** SSRF (CWE-918) is reported in this category (A01.12).
 
 ---
 
@@ -36,8 +38,6 @@ For each sub-type, apply the detection patterns. The same piece of code can trig
 ### 3. Verify cross-channel consistency
 
 A feature that is protected in the web controller but accessible without verification via an API route, a GraphQL endpoint, or an internal job remains vulnerable. Always cross-check the access paths to a given resource.
-
----
 
 ---
 
@@ -122,7 +122,7 @@ app.get("/api/orders/:orderId", requireAuth, async (req, res) => {
 
 ### A01.3 - Client-side-only access control
 
-**CWE-602** - Client-Side Enforcement of Server-Side Security
+**CWE-862** - Missing Authorization | related: CWE-602 Client-Side Enforcement of Server-Side Security
 
 **Pattern:** the authorization decision is made in the browser (hiding buttons, JS checks) with no server-side counterpart.
 
@@ -162,7 +162,7 @@ app.post("/api/users/:id/role", requireAuth, async (req, res) => {
 
 ### A01.4 - HTTP methods not protected uniformly
 
-**CWE-650** - Trusting HTTP Permission Methods on the Server Side
+**CWE-862** - Missing Authorization | **CWE-650** - Trusting HTTP Permission Methods on the Server Side
 
 **Pattern:** `GET` is protected but `DELETE` or `PUT` on the same URL is not.
 
@@ -178,7 +178,7 @@ app.post("/api/users/:id/role", requireAuth, async (req, res) => {
 
 ### A01.5 - Vertical privilege escalation
 
-**CWE-269** - Improper Privilege Management
+**CWE-863** - Incorrect Authorization | related: CWE-269 Improper Privilege Management, CWE-915 Mass Assignment
 
 **Pattern:** a user obtains rights higher than those they were granted, generally because sensitive information (role, permissions) is modifiable client-side.
 
@@ -186,7 +186,7 @@ app.post("/api/users/:id/role", requireAuth, async (req, res) => {
 
 - Registration or profile update endpoints that accept a `role`, `isAdmin`, `permissions` field in the body with no filtering (mass assignment).
 - JWTs whose `role` or `permissions` claims are derived from unvalidated user data.
-- Use of `Object.assign(user, req.body)` or equivalent (unfiltered `@RequestBody User user`, `User.objects.create(**request.data)` in Django): a **mass assignment** pattern.
+- Use of `Object.assign(user, req.body)` or equivalent (unfiltered `@RequestBody User user`, `User.objects.create(**request.data)` in Django): a **mass assignment** pattern. OWASP maps CWE-915 to A08:2025; report it here when it leads to privilege escalation and add `→ See also A08`.
 
 **Typical severity:** Critical.
 
@@ -303,7 +303,9 @@ app.get("/files", (req, res) => {
 
 ### A01.9 - Token / metadata manipulation (JWT, cookies)
 
-**CWE-345** - Insufficient Verification of Data Authenticity
+**CWE-639** - Authorization Bypass Through User-Controlled Key | related: CWE-345, CWE-347
+
+> **Deduplication:** when the root cause is a missing or broken signature check, report it once under A04.6 (signature) or A07.8 (claims validation) and add a `→ See also A01` mention here.
 
 **Pattern:** an attacker modifies or replays authentication elements to bypass controls. Typical cases: unverified JWT signature, accepted `none` algorithm, weak secret, modifiable sensitive claims.
 
@@ -311,10 +313,10 @@ app.get("/files", (req, res) => {
 
 - JWT decoding without verification (`jwt.decode(token)` instead of `jwt.verify(token, secret)`).
 - Acceptance of the `none` algorithm (verify that the `algorithms` list is explicitly passed to `jwt.verify`).
-- Weak or hardcoded HMAC secrets in the code (also a signal for A02, Cryptographic Failures).
+- Weak or hardcoded HMAC secrets in the code (see A04.5, Cryptographic Failures).
 - No verification of expiration (`exp`), issuer (`iss`), or audience (`aud`) when relevant.
 - Long-lived JWTs (>1h for an access token) with no revocation mechanism.
-- Session cookies without `HttpOnly`, `Secure`, or `SameSite`.
+- Session cookies without `HttpOnly`, `Secure`, or `SameSite` (report under A02.5).
 
 **Vulnerable code:**
 
@@ -341,7 +343,7 @@ req.user = payload;
 
 ### A01.10 - New features with no default control
 
-**CWE-1188** - Insecure Default Initialization of Resource
+**CWE-862** - Missing Authorization | **CWE-1188** - Initialization of a Resource with an Insecure Default
 
 **Pattern:** a recently added route or feature does not follow the authentication pattern used by the rest of the application. Often introduced during rapid development or an incomplete copy-paste.
 
@@ -442,15 +444,19 @@ const server = new ApolloServer({
 
 ```javascript
 // ✅ If graphql-shield is not used, systematic check in each resolver
+// (Apollo Server 4+ removed AuthenticationError/ForbiddenError: use GraphQLError with a code)
+const { GraphQLError } = require('graphql');
+const forbidden = (msg) => new GraphQLError(msg, { extensions: { code: 'FORBIDDEN' } });
+
 Mutation: {
   deleteUser: async (_, { id }, { user }) => {
-    if (!user) throw new AuthenticationError('Not authenticated');
-    if (user.role !== 'admin') throw new ForbiddenError('Admins only');
+    if (!user) throw new GraphQLError('Not authenticated', { extensions: { code: 'UNAUTHENTICATED' } });
+    if (user.role !== 'admin') throw forbidden('Admins only');
     return User.findByIdAndDelete(id);
   },
   updateProfile: async (_, { id, data }, { user }) => {
-    if (!user) throw new AuthenticationError('Not authenticated');
-    if (user.id !== id && user.role !== 'admin') throw new ForbiddenError('Access denied');
+    if (!user) throw new GraphQLError('Not authenticated', { extensions: { code: 'UNAUTHENTICATED' } });
+    if (user.id !== id && user.role !== 'admin') throw forbidden('Access denied');
     // Filter allowed fields (avoid GraphQL mass assignment)
     const { name, bio } = data; // never `role`, `isAdmin`, etc.
     return User.findByIdAndUpdate(id, { name, bio });
@@ -463,9 +469,104 @@ Mutation: {
 - **Mass assignment via mutation**: an `updateUser` mutation accepting fields such as `role`, `isAdmin`, `permissions` as arguments.
 - **BOLA (Broken Object Level Authorization)**: a resolver returning an object by ID with no ownership check (the GraphQL equivalent of IDOR).
 - **Unbounded batching**: batched queries allowing bulk extraction of other users' data via arbitrary IDs.
-- **Introspection in production**: exposes the full schema to an attacker, letting them map unprotected mutations (see A05.12).
+- **Introspection in production**: exposes the full schema to an attacker, letting them map unprotected mutations (see A05.11).
 
 **Typical severity:** Critical (admin mutation with no auth, mass assignment escalating to admin) to High (access to other users' data via BOLA, sensitive fields in the schema).
+
+---
+
+### A01.12 - SSRF (Server-Side Request Forgery)
+
+**CWE-918** - Server-Side Request Forgery
+
+> **Server-side code only.** SSRF requires the request to be issued by a server-side component (backend, SSR handler, serverless function, worker, PDF/image renderer). A `fetch(userUrl)` in browser-only code is not SSRF.
+
+**Pattern:** the application makes network requests to a URL supplied or influenced by the user without validating the destination. The attacker uses the server's network position to reach internal infrastructure (cloud metadata service, unexposed admin services, databases) or to exfiltrate data through out-of-band channels.
+
+**Detection, look for:**
+
+- HTTP calls using a URL originating from user input: `fetch(req.body.url)`, `axios.get(req.query.url)`, `file_get_contents($url)`, `requests.get(url)`, `HttpClient.get(request.url)`.
+- Import-from-URL features: remote avatar, configurable webhook, link preview, RSS/Atom feed, "import from URL".
+- HTML-to-PDF or screenshot rendering (wkhtmltopdf, Puppeteer, headless Chrome) of user-controlled HTML or URLs.
+- Uploaded SVGs or documents whose processing resolves external references (`<image href>`, `<use href>`), and XML parsers with external entity resolution (see A02.7 XXE).
+- Redirect-following HTTP clients where only the initial URL is validated.
+
+**Vulnerable code:**
+
+```javascript
+// ❌ Content proxy without validation - trivial SSRF
+app.post("/api/fetch-preview", requireAuth, async (req, res) => {
+  const { url } = req.body;
+  const response = await fetch(url); // ⚠️ can reach 169.254.169.254 or internal hosts
+  res.json({ content: await response.text() });
+});
+```
+
+**Typical targets:**
+
+```
+# Cloud metadata (credentials for the instance role)
+http://169.254.169.254/latest/meta-data/iam/security-credentials/
+http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
+
+# Unexposed internal services and port probing
+http://internal-admin.corp:8080/api/users
+http://10.0.0.5:6379/
+```
+
+**Fix, destination allowlist + address checks + no redirects:**
+
+```javascript
+// ✅ Validate the destination before any outbound request
+const dns = require("dns").promises;
+const net = require("net");
+
+const ALLOWED_HOSTS = new Set(["api.trusted-service.com", "uploads.cdn.com"]);
+
+function isPrivateAddress(ip) {
+  if (net.isIPv4(ip)) {
+    return /^(0\.|10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(ip);
+  }
+  const v6 = ip.toLowerCase();
+  return v6 === "::1" || v6 === "::" || v6.startsWith("fc") || v6.startsWith("fd") ||
+         v6.startsWith("fe80:") || v6.startsWith("::ffff:"); // also rejects IPv4-mapped IPv6
+}
+
+async function assertSafeUrl(rawUrl) {
+  const parsed = new URL(rawUrl); // throws on invalid URL
+  if (parsed.protocol !== "https:") throw new Error("Protocol not allowed");
+  if (!ALLOWED_HOSTS.has(parsed.hostname)) throw new Error("Host not allowed");
+  const addresses = await dns.lookup(parsed.hostname, { all: true }); // IPv4 and IPv6
+  if (addresses.some(({ address }) => isPrivateAddress(address))) {
+    throw new Error("Private destination forbidden");
+  }
+  return parsed;
+}
+
+// Never follow redirects automatically: each hop would need the same validation
+const res = await fetch((await assertSafeUrl(url)).href, { redirect: "error" });
+```
+
+**Note on DNS rebinding:** validating the resolved address and then letting the HTTP client resolve the name again leaves a time-of-check/time-of-use gap. Robust options: connect to the validated IP (custom agent / `lookup` hook), or route outbound requests through an egress proxy that enforces the policy. Network-level controls (egress firewall rules, IMDSv2 on AWS) are the strongest mitigation and are not visible in application code, so note them as a limitation rather than assuming they exist.
+
+**Typical severity:** 🔴 Critical (response returned to the attacker and cloud metadata or internal admin services reachable) to 🟠 High (blind SSRF, or destination partially restricted). Lower the confidence, not the severity, when network egress controls are unknown.
+
+---
+
+### A01.13 - Open redirect
+
+**CWE-601** - URL Redirection to Untrusted Site ('Open Redirect')
+
+**Pattern:** the application redirects to a URL taken from a request parameter (`?next=`, `?returnUrl=`, `?redirect=`) without restricting the destination. Used for phishing, and for token theft when combined with OAuth flows (see A07.11).
+
+**Detection, look for:**
+
+- `res.redirect(req.query.next)`, `redirect($request->input('url'))`, `HttpResponseRedirect(request.GET['next'])` with no allowlist or same-origin check.
+- Validation by prefix or substring (`url.startsWith('https://app.example.com')` accepts `https://app.example.com.evil.com`).
+
+**Fix:** redirect only to relative paths (reject `//` and `\\` prefixes) or to an exact allowlist of absolute URLs; frameworks often provide a helper (`url_has_allowed_host_and_scheme` in Django).
+
+**Typical severity:** 🟡 Medium (phishing aid) to 🟠 High (redirect usable to steal OAuth codes or tokens).
 
 ---
 
@@ -482,6 +583,8 @@ These rules are not findings in themselves but should guide recommendations.
 7. **Sessions and tokens**: invalidation on logout, short lifetimes for access tokens, refresh tokens stored and revocable.
 8. **Strict CORS**: explicit allowlist, no loose regex, `Vary: Origin` when the value is dynamic.
 9. **Path traversal**: resolution + containment check, or an allowlist mapping identifiers to predefined paths.
+10. **SSRF**: exact destination allowlist, rejection of private/link-local/loopback addresses after DNS resolution, no automatic redirects, and network egress controls where available.
+11. **Redirects**: relative paths or an exact allowlist only.
 
 ---
 
@@ -491,13 +594,11 @@ When an A01 finding is identified, use this grid to calibrate:
 
 | Finding criteria                                                                                                                   | Severity         |
 | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| Exploitable with no authentication + access to sensitive data or takeover (escalation to admin, arbitrary reading of system files) | 🔴 Critical      |
-| Exploitable by any authenticated user, exposes other users' data (IDOR on a sensitive resource, CSRF on a critical action)         | 🟠 High          |
+| Exploitable with no authentication + access to sensitive data or takeover (escalation to admin, arbitrary reading of system files, SSRF reaching cloud metadata) | 🔴 Critical      |
+| Exploitable by any authenticated user, exposes other users' data (IDOR on a sensitive resource, CSRF on a critical action, blind SSRF to internal services) | 🟠 High          |
 | Conditional exploitation (CSRF on a moderate action, permissive CORS on a low-sensitivity API, partial escalation)                 | 🟡 Medium        |
 | Risky pattern but with no direct exploitable vector (suboptimal configuration, defense-in-depth only)                              | 🟢 Low           |
 | Best practice not followed with no exploitation risk (e.g., roles used where permissions would be preferable)                      | ℹ️ Informational |
-
----
 
 ---
 
@@ -510,37 +611,17 @@ When an A01 finding is identified, use this grid to calibrate:
 | Role-based access with no explicit check in the handler            | The control may be centralized in a decorator or a policy object           | Look for `@Roles()`, `@Guard()`, `can()`, `gate()`, `policy()` in the context                    |
 | `isAdmin` read from the JWT with no re-verification against the DB | Acceptable if the JWT has a short lifetime and a revocation mechanism      | Check the token's `exp` and the existence of a revocation list                                   |
 | Multi-tenant: no visible `tenantId` filter                         | The filter may be injected globally via a tenant-aware ORM or a middleware | Look for `setTenantId`, `withTenant`, `TenantScope` in the ORM configuration                     |
+| SSRF: `fetch(url)` with a variable                                 | The URL may be built from a fixed base URL or an allowlist; or the code runs only in the browser | Trace the variable to its source; confirm the call runs server-side                              |
 
 ---
 
 ## Finding template for the report
 
-Reproduce this format in the report produced by the orchestrator. Adapt the language of the code excerpts to that of the audited project.
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-````
-**[OWASP-A01-NNN]** - [Short title]
-
-- **Severity:** [level + icon]
-- **Confidence:** 🔵 High / 🟣 Medium / ⚪ Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence]
 - **Sub-type:** A01.X - [sub-type name]
-- **Location:** [file:line / endpoint]
-- **Description:** [explanation of the mechanism]
-- **Potential impact:** [what an attacker can do]
-- **Evidence / Vulnerable example:**
-  ```[language]
-  // excerpt from the audited code
-````
-
-- **Recommendation:** [concrete action]
-- **Remediation example:**
-  ```[language]
-  // fixed version
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A01:2021](https://owasp.org/Top10/A01_2021-Broken_Access_Control/)
-
-```
+- **Severity justification:** [1 sentence; specify who can exploit it (anonymous, any authenticated user, a specific role) and which resource or action is exposed]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A01:2025 - Broken Access Control](https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/) | [OWASP Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) | [OWASP SSRF Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html) (for A01.12)
 
 ---
 
@@ -551,6 +632,7 @@ Some access control flaws are only detectable dynamically or with functional kno
 - Access to another tenant's resource that is not marked in the code by an obvious field (implicit tenant_id, schema-based multi-tenancy).
 - Business logic granting access via a chain of relationships (user → team → project → resource): static auditing can flag the absence of a check but cannot confirm its functional insufficiency.
 - Race conditions on authorization checks (TOCTOU).
+- Multi-step flows where authorization depends on state set in earlier requests (wizard steps, approval workflows).
+- SSRF impact: whether internal services or cloud metadata are reachable depends on network egress rules and metadata service settings that are not in the code.
 
 Mention these limitations in the "Limitations" section of the report when relevant.
-```

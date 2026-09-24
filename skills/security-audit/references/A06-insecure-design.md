@@ -1,7 +1,7 @@
 # A06: Insecure Design
 
 **Reference:** OWASP Top 10 (2025), category A06
-**Main associated CWEs:** CWE-73, CWE-183, CWE-209, CWE-233, CWE-256, CWE-434, CWE-444, CWE-451, CWE-602, CWE-657, CWE-770, CWE-799, CWE-841, CWE-1021
+**Key CWEs:** CWE-73, CWE-183, CWE-256, CWE-362, CWE-434, CWE-444, CWE-451, CWE-602, CWE-653, CWE-657, CWE-799, CWE-841, CWE-1021
 **Finding format:** `OWASP-A06-NNN`
 
 This file is loaded by the orchestrator skill `owasp-security-audit` when analyzing category A06. It provides detection patterns, typical fixes, and the severity grid specific to design flaws.
@@ -207,7 +207,7 @@ async function checkout(req, res) {
     if (prev + quantity > 1) {
       return res
         .status(429)
-        .json({ error: "Limite d'un exemplaire par client" });
+        .json({ error: "Limit of one item per customer" });
     }
   }
 
@@ -268,7 +268,7 @@ async function checkout(req, res) {
 
 ### A06.4: Lack of Tenant Separation (Multi-Tenancy)
 
-**CWE-657**: Violation of Secure Design Principles | **CWE-233**: Improper Handling of Parameters
+**CWE-653**: Improper Isolation or Compartmentalization | **CWE-657**: Violation of Secure Design Principles
 
 **Pattern:** in a SaaS application, the separation between tenants relies solely on a `tenant_id` filter in the application code. The slightest developer oversight exposes one customer's data to another. A robust design makes this leak **structurally impossible**.
 
@@ -303,17 +303,22 @@ async function getInvoices(req, res) {
 //   USING (tenant_id = current_setting('app.tenant_id')::uuid);
 // Even if a SQL query forgets the filter, the database refuses to return the rows
 
-// ✅ Level 2: middleware injecting the tenantId into the DB session
-async function tenantMiddleware(req, res, next) {
-  if (!req.user?.tenantId) return res.status(401).end();
-  await db.query("SET LOCAL app.tenant_id = $1", [req.user.tenantId]);
-  next();
+// ✅ Level 2: set the tenant for the current transaction
+// SET does not accept bind parameters: use set_config(), and run it inside the same
+// transaction as the queries (with a connection pool, a session-level setting can leak
+// to the next request that reuses the connection).
+async function withTenant(tenantId, work) {
+  if (!tenantId) throw new Error("tenantId is required");
+  return db.transaction(async (tx) => {
+    await tx.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]); // true = transaction-local
+    return work(tx);
+  });
 }
 
 // ✅ Level 3: repository requiring a tenantId at construction
 class InvoiceRepository {
   constructor(tenantId) {
-    if (!tenantId) throw new Error("TenantId requis");
+    if (!tenantId) throw new Error("tenantId is required");
     this.tenantId = tenantId;
   }
   async findById(id) {
@@ -390,7 +395,7 @@ return response()->json(['url' => asset('uploads/' . $originalName)]);
 // ✅ Rule 1: validation by magic bytes (not by client Content-Type)
 $request->validate([
     'file' => ['required', 'file', 'max:10240', 'mimes:jpeg,png,pdf']
-    // 'mimes' checks the file's actual magic bytes, not the declared Content-Type
+    // 'mimes' infers the type from the file content (finfo), not from the declared Content-Type
 ]);
 
 // ✅ Rule 2: double-check of the actual MIME type
@@ -409,6 +414,8 @@ return response()->json(['id' => $safeName]); // never the real path
 ```
 
 **Cross-cutting rule:** an uploaded file must never be served from a path directly accessible via URL without explicit access control. The access mode (`attachment` vs `inline`) must also be defined by the application, never left to the browser.
+
+**Active content formats:** SVG, HTML, and XML uploads can carry stored XSS when served inline from the application's origin (A05.8), and XXE or SSRF when parsed or rendered server-side (A02.7, A01.12). Archive uploads (ZIP, TAR) can contain `../` paths on extraction (A01.8).
 
 **Typical severity:** 🔴 Critical (RCE via a web shell if the PHP file is executable, reading of sensitive files via path traversal).
 
@@ -527,34 +534,13 @@ async function redeemCoupon(userId, couponCode) {
 
 ---
 
-## Finding Template for the Report
+## Finding template for the report
 
-````
-**[OWASP-A06-NNN]**: [Short title]
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-- **Severity:** [level + icon]
-- **Confidence:** 🔵 High / 🟣 Medium / ⚪ Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence, specify the concrete business or operational impact]
-- **Subtype:** A06.X: [subtype name]
-- **Location:** [file:line / endpoint / architectural component]
-- **Description:** [explanation of the design flaw and the abuse mechanism]
-- **Potential impact:** [what an attacker can accomplish and at what scale]
-- **Evidence / Vulnerable example:**
-  ```[language]
-  // excerpt of the code or description of the vulnerable architecture
-````
-
-- **Recommendation:** [required design change, specify if a patch alone is insufficient]
-- **Remediation example:**
-  ```[language]
-  // fixed version or alternative architecture
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A04:2021](https://owasp.org/Top10/A04_2021-Insecure_Design/) | [OWASP Business Logic Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Business_Logic_Security_Cheat_Sheet.html)
-
-```
-
-> Note: Insecure Design corresponds to A04 in the OWASP Top 10 2021. In this orchestrator's 2025 reference, it is A06.
+- **Sub-type:** A06.X - [sub-type name]
+- **Severity justification:** [1 sentence; specify the concrete business or operational impact, and whether a code patch alone is insufficient]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A06:2025 - Insecure Design](https://owasp.org/Top10/2025/A06_2025-Insecure_Design/) | [OWASP Business Logic Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Business_Logic_Security_Cheat_Sheet.html)
 
 ---
 
@@ -568,5 +554,4 @@ A06 is the category least detectable through static analysis and most dependent 
 - **Upload**: validation via magic bytes vs. declared MIME type can only be confirmed by reading the libraries used and their actual configuration.
 - **Behavior under load**: business logic abuses (A06.1, A06.2) often only reveal themselves under load or during business-oriented penetration testing, not from reading the code alone.
 
-Systematically mention these limitations in the "Limitations" section of the report for A06, and recommend business-logic-oriented penetration testing to complement the static analysis.
-```
+Mention these limitations in the "Limitations" section of the report for A06, and recommend business-logic-oriented penetration testing to complement the static analysis. Findings in this category usually warrant 🟣 Medium or ⚪ Low confidence unless the business rule is documented in the code or provided by the user.

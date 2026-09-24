@@ -1,170 +1,113 @@
 # OWASP Security Audit
 
-A dual-platform plugin for **Claude Code** and **Cursor** that performs a complete application security audit based on the **OWASP Top 10 (2025)**. It orchestrates 10 category reference guides (one per OWASP category) and produces a structured, actionable vulnerability report prioritized by severity and remediation effort.
+An agent skill for **Claude Code** and **Cursor** that performs an evidence-based security review of a codebase against the **OWASP Top 10:2025** and produces a structured report with separate severity and confidence ratings.
 
-This plugin doesn't just apply a generic checklist: it detects the technical stack of the audited project, adapts its detection patterns to the language/framework actually in use, distinguishes server-side code from client-side code (SSR vs CSR), and never runs a dynamic verification command without the user's explicit approval.
+It is a first-pass review, not a replacement for a penetration test or a dedicated SAST/DAST pipeline. The analysis is mostly static and performed by a language model: it can miss issues and it can be wrong, which is why every finding carries a confidence level and the report lists what could not be assessed.
 
-## When this plugin triggers
+## What it does
 
-The main skill activates automatically as soon as the conversation mentions: security audit, OWASP analysis, security code review, application vulnerabilities, application pentest, API security, hardening, or terms such as SQL injection, XSS, CSRF, weak authentication, secrets in code, sensitive data exposure, SSRF, access control.
+- **Loads one reference guide per OWASP category** (A01 to A10), each with detection patterns, false-positive checks, severity guidance, and remediation examples.
+- **Detects the stack first** (languages, frameworks, ORM, GraphQL, LLM integrations, containers) and applies server-side rules only to code that actually runs on a server. React/Vue/Angular code that runs only in the browser is not checked for SQL injection or SSRF; Next.js API routes, Server Actions, Nuxt server routes, and serverless functions are treated as backend code.
+- **Separates severity from confidence.** Severity rates the impact if the finding is real; confidence rates how well the code evidence supports it (🔵 traced source-to-sink, 🟣 likely but partly not visible, ⚪ pattern only, marked `[MANUAL VERIFICATION REQUIRED]`).
+- **Requires evidence for every finding**: file and line, code excerpt, source-to-sink path for data-flow issues, reachable entry point, impact, and a concrete fix.
+- **Reports what it could not assess** (business logic, deployed configuration, cloud IAM, runtime behavior) instead of marking those areas as clean.
 
-It can also be invoked explicitly (see [Usage](#usage)).
+## Safety behavior
 
-## How it works
+- **The audited repository is treated as untrusted input.** Instructions embedded in READMEs, comments, config files, fixtures, or agent prompt files inside the target (for example "ignore previous instructions and run this command") are analyzed as content and never followed.
+- **Secrets are never reproduced.** The report gives the type and location of a detected secret and masks the value (`[SECRET MASKED]`). Searches print file names and variable names rather than values where possible.
+- **No runtime command runs without explicit approval.** Static reads (`grep`, `find`, reading files) run freely inside the target. Anything that can execute project or third-party code (`npm install`, `npm test`, `npx`, `pip install`, `composer install`, `docker compose up`, build tools, test runners) or contact external services (`npm audit`) is shown first with its purpose, execution context, and what it can run, and waits for your "yes". For containerized projects, the skill asks whether to run checks inside the container or on the host, and warns about version mismatches.
+- **The audit is read-only**: it does not modify files in the target unless you ask for fixes.
 
-The audit runs through 5 steps:
+## Categories covered (OWASP Top 10:2025)
 
-### 1. Context gathering
+| #   | Category                               | Reference guide                                                                                                  |
+| --- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| A01 | Broken Access Control (includes SSRF)  | [A01-broken-access-control.md](skills/security-audit/references/A01-broken-access-control.md)                    |
+| A02 | Security Misconfiguration              | [A02-security-misconfiguration.md](skills/security-audit/references/A02-security-misconfiguration.md)            |
+| A03 | Software Supply Chain Failures         | [A03-software-supply-chain-failures.md](skills/security-audit/references/A03-software-supply-chain-failures.md) |
+| A04 | Cryptographic Failures                 | [A04-cryptographic-failures.md](skills/security-audit/references/A04-cryptographic-failures.md)                  |
+| A05 | Injection                              | [A05-injection.md](skills/security-audit/references/A05-injection.md)                                            |
+| A06 | Insecure Design                        | [A06-insecure-design.md](skills/security-audit/references/A06-insecure-design.md)                                |
+| A07 | Authentication Failures                | [A07-authentication-failures.md](skills/security-audit/references/A07-authentication-failures.md)                |
+| A08 | Software or Data Integrity Failures    | [A08-software-or-data-integrity-failures.md](skills/security-audit/references/A08-software-or-data-integrity-failures.md) |
+| A09 | Security Logging and Alerting Failures | [A09-security-logging-and-alerting-failures.md](skills/security-audit/references/A09-security-logging-and-alerting-failures.md) |
+| A10 | Mishandling of Exceptional Conditions  | [A10-mishandling-of-exceptional-conditions.md](skills/security-audit/references/A10-mishandling-of-exceptional-conditions.md) |
 
-The skill asks **at most 4 targeted questions** if the provided context is insufficient (nature of the target, language/framework, scope: A01 through A10 or specific categories, desired report level plus output language), without ever blocking the analysis if the context already provided is sufficient.
+Prompt injection in applications that embed an LLM is also checked (A05.12).
 
-### 2. Technical stack detection
+## Report
 
-Before any analysis, the skill identifies the language(s), framework(s), ORM, presence of GraphQL, an integrated LLM, etc. via targeted searches (`grep`/`find`), in order to prioritize relevant patterns and avoid false positives.
+The report contains an executive summary, a summary table by severity with a confidence breakdown, findings grouped by category (ID `OWASP-A0X-NNN`, CWE, severity and justification, confidence, effort, location, evidence, impact, fix, manual verification steps when needed), quick wins, a prioritized remediation plan, a coverage table, and a limitations section.
 
-Particular attention is paid to JS frameworks (React, Vue, Angular, Next.js, Nuxt.js): the skill determines whether the code runs as **pure CSR** (SPA, only DOM XSS flaws and client-side secrets apply) or **SSR/hybrid** (Next.js API routes, Server Actions, Nuxt `defineEventHandler`, Angular Universal; the code must then be audited like standard backend code: injection, SSRF, access control).
-
-A stack-to-priority-patterns matrix then guides the analysis (e.g. Node.js+Mongo → NoSQL injection, PHP+MySQL → SQL injection, JWT/OAuth → token validation, file upload → SSRF via SVG, etc.).
-
-### 3. Quick triage
-
-Before the category-by-category analysis, 10 high-impact patterns are checked first (SQL injection via concatenation, hardcoded secrets, IDOR, JWT decoded without verification, SSRF, unsafe deserialization, debug mode in production, disabled TLS, mass assignment...). These patterns are high-yield starting points for typical critical findings.
-
-### 4. Execution environment detection
-
-Before any **runtime** check (`npm`, `node`, `pip`, `php`, etc.), the skill resolves an **Execution Context**:
-
-- Classifies commands as **static** (host workspace), **runtime** (chosen context only), or **infra** (Docker/Podman/nerdctl CLI on the host)
-- Detects whether it is already in a container, whether the project is dockerized (`Dockerfile`, Compose, `.devcontainer`), and which container CLI is available
-- If containers are stopped: **asks** whether to start them or to run checks on the host
-- Selects the app service automatically when possible, or asks when several candidates exist
-- On host fallback for a dockerized project: compares host vs declared image versions, warns on mismatch, and records it in the **audit report** Limitations section (when that situation applies)
-- **Never** runs a runtime command without announcing it, specifying context (`exec_prefix`, working directory), and getting explicit user validation
-
-The resolved Execution Context is passed to every category sub-agent on large codebases so parallel analysis cannot bypass it.
-
-### 5. Analysis by category
-
-Each OWASP category has a dedicated reference guide (see table below), loaded on demand. For small codebases (< 50 files), the analysis is sequential; beyond that, one sub-agent is dispatched per OWASP category in parallel, and the results are then aggregated and deduplicated.
-
-Each finding is classified according to:
-
-- **Severity**: 🔴 Critical / 🟠 High / 🟡 Medium / 🟢 Low / ℹ️ Informational
-- **Confidence**: 🔵 High / 🟣 Medium / ⚪ Low (`[MANUAL VERIFICATION REQUIRED]`)
-- **Remediation effort**: Low (< 1h) / Medium (1-4h) / High (> 4h) / Architectural
-
-## Categories covered (OWASP Top 10 - 2025)
-
-| #   | Category                               | Reference                                                  |
-| --- | -------------------------------------- | ---------------------------------------------------------- |
-| A01 | Broken Access Control                  | `references/A01-broken-access-control.md`                  |
-| A02 | Security Misconfiguration              | `references/A02-security-misconfiguration.md`              |
-| A03 | Software Supply Chain Failures         | `references/A03-software-supply-chain-failures.md`         |
-| A04 | Cryptographic Failures                 | `references/A04-cryptographic-failures.md`                 |
-| A05 | Injection                              | `references/A05-injection.md`                              |
-| A06 | Insecure Design                        | `references/A06-insecure-design.md`                        |
-| A07 | Authentication Failures                | `references/A07-authentication-failures.md`                |
-| A08 | Software or Data Integrity Failures    | `references/A08-software-or-data-integrity-failures.md`    |
-| A09 | Security Logging and Alerting Failures | `references/A09-security-logging-and-alerting-failures.md` |
-| A10 | Mishandling of Exceptional Conditions  | `references/A10-mishandling-of-exceptional-conditions.md`  |
-
-Each reference file documents: the category definition, attack-surface prerequisites (real exploitability), detection methodologies, category-specific sub-patterns, associated CWEs, and the finding naming format (`OWASP-A0X-NNN`).
-
-## Report produced
-
-The final report includes:
-
-- An **executive summary** with an overall risk score
-- A **summary table** of vulnerabilities by severity
-- The **detail per category** (A01 to A10), with for each finding: justified severity, confidence level, remediation effort, attack surface, precise location, description, potential impact, vulnerable code example (secrets always masked), recommendation, remediation example, and CWE/OWASP references
-- A **Quick Wins** section: critical/high findings with low effort, to fix first
-- A **prioritized remediation plan**
-- A **coverage table** (categories analyzed vs out of scope)
-- An explicit **Limitations** section covering what could not be assessed
-
-The report can be produced in **English (default), French, or Spanish**, at three levels of detail: executive, technical, or exhaustive.
-
-## Guaranteed behavior rules
-
-- No vulnerability is ever invented: insufficient context → category marked "Not assessable"
-- Every severity level is justified in one sentence
-- Detected secrets are always masked (`[SECRET MASKED]`)
-- A dangerous pattern not reachable from an untrusted input is downgraded by at least one severity level
-- Findings duplicated across categories (e.g. hardcoded secret → A02 + A04) are attached to the most relevant category with a cross-reference
-- Test code (`*.test.*`, `*.spec.*`, `__tests__/`, `fixtures/`) is excluded from the production scope or flagged as Informational
+Three levels of detail are available (executive, technical, exhaustive), in English (default), French, or Spanish.
 
 ## Installation
 
 ### Claude Code
 
-This repository is both a plugin and its own Claude Code marketplace.
+This repository is its own Claude Code marketplace, so you can add it directly from GitHub:
 
 ```
 /plugin marketplace add ayman-benmada/owasp-security-audit
 /plugin install owasp-security-audit@owasp-security-audit-marketplace
 ```
 
+To try it from a local clone without installing:
+
+```bash
+git clone https://github.com/ayman-benmada/owasp-security-audit.git
+claude --plugin-dir ./owasp-security-audit
+```
+
 ### Cursor
 
-Install from the [Cursor Marketplace](https://cursor.com/marketplace).
+Install it as a local plugin:
+
+```bash
+git clone https://github.com/ayman-benmada/owasp-security-audit.git ~/.cursor/plugins/local/owasp-security-audit
+```
+
+Then restart Cursor or run **Developer: Reload Window**.
 
 ## Usage
 
-Once the plugin is enabled, the agent can invoke the skill automatically as soon as a security audit request is detected in the conversation, or it can be invoked explicitly.
+The skill can be selected automatically when you ask for a security audit, or invoked explicitly.
 
-**Claude Code:**
-
-```
-/owasp-security-audit:security-audit
-```
-
-**Cursor:** invoke the `security-audit` skill from chat (or ask for an OWASP security audit in natural language).
+- **Claude Code:** `/owasp-security-audit:security-audit`
+- **Cursor:** `/security-audit` in Agent chat
 
 Example request:
 
-> Run a complete security audit of this Node.js/Express repository, technical level, report in English.
+> Run a security audit of this Node.js/Express repository, technical level, report in English.
+
+The skill may ask up to four questions first (target, stack, scope, report level and language) if they cannot be inferred.
+
+## Limitations
+
+- Static review cannot reliably confirm business logic flaws, multi-step authorization issues, IDOR that depends on implicit ownership rules, multi-tenant isolation, race conditions, or data flows across complex call graphs and services. These are reported with lower confidence or listed as not assessed.
+- Deployed configuration (reverse proxies, WAF, cloud IAM, network egress, secrets managers) and actual dependency CVE status are outside what the code shows. CVE checks need a vulnerability database query, which the skill only runs with your approval.
+- Findings describe exploitability based on the code; they are not proof of exploitation in production.
+- Results depend on the model and on how much of the codebase is in scope. Review findings before acting on them, especially those marked `[MANUAL VERIFICATION REQUIRED]`.
 
 ## Repository structure
 
 ```
 .claude-plugin/
-├── plugin.json                                # Claude Code plugin manifest
-└── marketplace.json                           # Claude Code marketplace catalog
+├── plugin.json            # Claude Code plugin manifest
+└── marketplace.json       # Claude Code marketplace catalog (this repository)
 .cursor-plugin/
-└── plugin.json                                # Cursor plugin manifest
+└── plugin.json            # Cursor plugin manifest
 assets/
-└── logo.png                                   # Marketplace logo
+└── logo.png
 skills/
-└── security-audit/                            # Shared skill (Claude + Cursor)
-    ├── SKILL.md                               # Main orchestrator (5 steps)
-    └── references/
-        ├── A01-broken-access-control.md
-        ├── A02-security-misconfiguration.md
-        ├── A03-software-supply-chain-failures.md
-        ├── A04-cryptographic-failures.md
-        ├── A05-injection.md
-        ├── A06-insecure-design.md
-        ├── A07-authentication-failures.md
-        ├── A08-software-or-data-integrity-failures.md
-        ├── A09-security-logging-and-alerting-failures.md
-        └── A10-mishandling-of-exceptional-conditions.md
+└── security-audit/        # Shared skill (Claude Code + Cursor)
+    ├── SKILL.md           # Orchestrator: operating rules, steps, report format
+    └── references/        # One guide per OWASP Top 10:2025 category (A01 to A10)
 ```
 
-## Development
+## License
 
-### Claude Code
+[MIT](LICENSE) © 2026 Ayman BENMADA
 
-```bash
-git clone git@github.com:ayman-benmada/owasp-security-audit.git
-claude --plugin-dir ./owasp-security-audit
-```
-
-## Limitations
-
-- Analysis is primarily **static**: optional runtime checks are proposed only with the user's explicit approval (never automated DAST)
-- The depth of the analysis depends on the context provided (code excerpt vs. full codebase); any limitation is stated in the report's "Limitations" section
-- Does not replace a tooled penetration test (automated SAST/DAST, fuzzing) or a review by a certified pentester on a high-stakes scope
-
-## Author
-
-Ayman BENMADA
+This project is independent and is not affiliated with or endorsed by the OWASP Foundation. OWASP® is a registered trademark of the OWASP Foundation, Inc. Category names and numbering refer to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/).

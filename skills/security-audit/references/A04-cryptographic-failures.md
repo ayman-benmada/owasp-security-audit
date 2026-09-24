@@ -1,7 +1,7 @@
 # A04 - Cryptographic Failures
 
 **Reference framework:** OWASP Top 10 (2025), category A04
-**Main associated CWEs:** CWE-261, CWE-310, CWE-319, CWE-320, CWE-326, CWE-327, CWE-328, CWE-330, CWE-331, CWE-338, CWE-347, CWE-522, CWE-523, CWE-757, CWE-798
+**Key CWEs:** CWE-261, CWE-319, CWE-320, CWE-321, CWE-323, CWE-326, CWE-327, CWE-328, CWE-330, CWE-331, CWE-338, CWE-347, CWE-523, CWE-757, CWE-759, CWE-916
 **Finding format:** `OWASP-A04-NNN`
 
 This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A04. It provides detection patterns, standard fixes, and the severity grid specific to cryptographic failures.
@@ -14,7 +14,7 @@ Cryptographic failures encompass all vulnerabilities related to the improper use
 
 This category is particularly insidious: a cryptographic failure can remain silent for a long time, leaving sensitive data accessible without triggering any alert.
 
-**Emerging threat to flag systematically:** the _harvest now, decrypt later_ strategy consists of intercepting and storing encrypted data (RSA, ECC) today, in the hope of decrypting it once quantum computing capabilities allow it. Systems handling data with a long sensitivity lifespan (medical, financial, government data) should incorporate a migration path toward post-quantum cryptography (NIST FIPS 203/204/205, published in August 2024) with a target horizon of 2030.
+**Long-term threat (only for long-lived sensitive data):** the _harvest now, decrypt later_ strategy consists of intercepting and storing data protected by RSA or ECC key exchange today, in the hope of decrypting it once quantum computing capabilities allow it. Systems handling data with a long sensitivity lifespan (medical, financial, government data) should plan a migration path toward post-quantum cryptography (NIST FIPS 203/204/205, published in August 2024). See A04.8.
 
 Guiding principle: **never implement cryptography yourself**. Use proven primitives, exposed by maintained libraries, with the parameters recommended by current standards.
 
@@ -132,7 +132,7 @@ add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; prelo
 | Use case              | Avoid                     | Use                                        |
 | --------------------- | ------------------------- | ------------------------------------------ |
 | General hashing       | MD5, SHA-1                | SHA-256, SHA-3                             |
-| Password hashing      | MD5, SHA-\*, bcrypt alone | Argon2id, bcrypt (with cost >= 10), scrypt |
+| Password hashing      | MD5, SHA-\* (even salted) | Argon2id, scrypt, bcrypt (cost >= 10), PBKDF2 (FIPS contexts) |
 | Symmetric encryption  | DES, 3DES, RC4, AES-ECB   | AES-256-GCM, ChaCha20-Poly1305             |
 | Asymmetric encryption | RSA < 2048 bits           | RSA >= 2048 bits, ECDSA P-256+             |
 | TLS                   | 1.0, 1.1                  | TLS 1.2 (minimum), TLS 1.3 (recommended)   |
@@ -143,7 +143,7 @@ add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; prelo
 
 ### A04.3 - Inadequate Password Hashing
 
-**CWE-328** - Use of Weak Hash | **CWE-261** - Weak Cryptography for Passwords | **CWE-522** - Insufficiently Protected Credentials
+**CWE-916** - Use of Password Hash With Insufficient Computational Effort | **CWE-759** - Use of a One-Way Hash without a Salt | **CWE-328** - Use of Weak Hash
 
 **Pattern:** passwords are stored using a fast hash function (MD5, SHA-\*, even SHA-256) or without a salt, exposing the system to massive brute-force attacks and rainbow tables.
 
@@ -183,7 +183,7 @@ const valid = await argon2.verify(storedHash, password);
 
 **Equivalents:** `password_hash($password, PASSWORD_ARGON2ID)` (PHP), `werkzeug.security.generate_password_hash` with `method='scrypt'` (Python/Flask), `BCrypt.hashpw()` (Java).
 
-**Typical severity:** 🔴 Critical (fast hashing without a salt on production data) to 🟠 High (bcrypt with too low a cost factor, or a hardcoded static salt).
+**Typical severity:** 🔴 Critical (plaintext, or fast hashing without a salt, on production data) to 🟠 High (fast salted hash, hardcoded static salt, or bcrypt with a very low cost such as < 8). A bcrypt cost of 8 or 9 is 🟢 Low (below the OWASP recommendation of 10).
 
 ---
 
@@ -226,9 +226,9 @@ const resetToken = crypto.randomBytes(32).toString("hex"); // 256 bits
 
 ---
 
-### A04.5 - Hardcoded Keys and Secrets
+### A04.5 - Hardcoded Cryptographic Keys and Signing Secrets
 
-**CWE-798** - Use of Hard-coded Credentials | **CWE-321** - Use of Hard-coded Cryptographic Key
+**CWE-321** - Use of Hard-coded Cryptographic Key | related: CWE-798 Use of Hard-coded Credentials
 
 **Pattern:** encryption keys, JWT secrets, API tokens, or database passwords present directly in the source code or in versioned files. Once committed to Git, these secrets are **permanently compromised**: the history is not erased by a simple deletion commit.
 
@@ -239,7 +239,7 @@ const resetToken = crypto.randomBytes(32).toString("hex"); // 256 bits
 - `Dockerfile` with `ENV SECRET=...` or `ARG API_KEY=...` (`ARG` values appear in the layer history).
 - Secrets passed as command-line arguments (visible in system logs).
 
-**Mandatory masking rule:** if a real secret is detected, **never reproduce it** in the report. Replace it with `[SECRET MASKED]` and flag its presence as a separate finding with a recommendation for immediate rotation.
+**Mandatory masking rule:** if a real secret is detected, **never reproduce its value**. Follow the secret-handling rules in `SKILL.md` and recommend immediate rotation.
 
 **Standard fix:**
 
@@ -252,7 +252,7 @@ const jwtSecret = process.env.JWT_SECRET; // injected at runtime via a vault or 
 if (!jwtSecret) throw new Error("JWT_SECRET is not defined");
 ```
 
-**Note:** this subtype overlaps with A02.2 (Security Misconfiguration, hardcoded secrets). Report it under both categories if relevant, referencing the cross-linked finding.
+**Note:** this subtype overlaps with A02.2 (secrets in configuration files) and A07.1 (hard-coded credentials). Report each secret once, in the most specific category (encryption keys and signing secrets here), and add `→ See also` mentions elsewhere.
 
 **Typical severity:** 🔴 Critical.
 
@@ -260,7 +260,7 @@ if (!jwtSecret) throw new Error("JWT_SECRET is not defined");
 
 ### A04.6 - Disabled TLS or Signature Validation
 
-**CWE-295** - Improper Certificate Validation | **CWE-347** - Improper Verification of Cryptographic Signature | **CWE-757** - Selection of Less-Secure Algorithm During Negotiation
+**CWE-347** - Improper Verification of Cryptographic Signature | **CWE-757** - Selection of Less-Secure Algorithm During Negotiation | **CWE-295** - Improper Certificate Validation
 
 **Pattern:** verification of a peer's authenticity (TLS certificate) or of a token's authenticity (JWT signature) is disabled or can be bypassed, nullifying the cryptographic guarantees of the channel or mechanism.
 
@@ -319,7 +319,7 @@ const payload = jwt.verify(token, process.env.JWT_SECRET, {
 
 ### A04.7 - Poor Cryptographic Key Management
 
-**CWE-320** - Key Management Errors | **CWE-310** - Cryptographic Issues
+**CWE-320** - Key Management Errors | **CWE-323** - Reusing a Nonce, Key Pair in Encryption
 
 **Pattern:** cryptographic keys are not rotated, are stored with insufficient protection, or the architecture does not allow rotation without massive re-encryption of data.
 
@@ -362,7 +362,7 @@ This model makes it possible to:
 - Absence of a mechanism allowing cryptographic algorithms to be replaced without an application redesign (the algorithm hardcoded rather than configurable).
 - No mention of a post-quantum migration path in the security documentation of a critical system.
 
-**Note on severity:** this subtype is generally ℹ️ Informational to 🟢 Low for most applications. It becomes 🟡 Medium to 🟠 High for systems handling medical, financial, or government data, or any system whose data sensitivity lifespan exceeds 5 years. Mention it systematically as a point of attention in the report, even when the severity is low.
+**Note on severity:** this subtype is generally ℹ️ Informational for most applications and should only be reported when the data has a long confidentiality lifespan (medical, financial, government data, or more than about 5 years), where it can reach 🟡 Medium. Do not add it to every report by default.
 
 **Reference standards:** NIST FIPS 203 (ML-KEM / Kyber), FIPS 204 (ML-DSA / Dilithium), FIPS 205 (SLH-DSA / SPHINCS+), published in August 2024.
 
@@ -373,10 +373,10 @@ This model makes it possible to:
 ## Cross-Cutting Remediation Rules
 
 1. **TLS everywhere, HSTS enabled**: all communications over HTTPS, `Strict-Transport-Security` with `includeSubDomains` and `preload`, `max-age` >= 1 year.
-2. **Argon2id for passwords**: with the parameters recommended by the OWASP Password Storage Cheat Sheet. bcrypt acceptable (cost >= 10). Never MD5/SHA-\* alone.
+2. **Argon2id for passwords**: with the parameters recommended by the OWASP Password Storage Cheat Sheet. scrypt or bcrypt (cost >= 10) are acceptable. Never MD5/SHA-\* alone.
 3. **CSPRNG for any security-relevant value**: `crypto.randomBytes()` (Node.js), `random_bytes()` (PHP), `secrets` (Python), `SecureRandom` (Java). Never `Math.random()`, `rand()`, `mt_rand()`.
 4. **Secrets via a vault**: HashiCorp Vault, AWS Secrets Manager, Azure Key Vault. Environment variables injected at runtime. Nothing in the code, nothing in Git, nothing in Docker images.
-5. **Never disable TLS validation**: not even temporarily, not even in staging. Use self-signed certificates with a trusted internal CA if necessary.
+5. **Never disable TLS validation**: not even temporarily, not even in staging. For internal services, issue certificates from an internal CA and add that CA to the client trust store.
 6. **JWT: algorithm enforced server-side**: strict allowlist, `none` explicitly excluded, never trust the token's `alg` field.
 7. **DEK/KEK architecture**: separate data keys from key-protecting keys, store KEKs in a KMS or HSM.
 8. **Unique IV per encryption operation**: generated via a CSPRNG for each encryption, never reused with the same key (critical in GCM/CTR mode).
@@ -390,10 +390,10 @@ This model makes it possible to:
 | Finding criteria                                                                                                                                                                                                                                           | Severity         |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
 | Passwords in cleartext or hashed with MD5/SHA-\* without a salt, JWT secret hardcoded in production, TLS disabled on an HTTP client, JWT with no signature verification or with `none` accepted, IV reused in AES-GCM, weak PRNG for a reset/session token | 🔴 Critical      |
-| Obsolete algorithm (DES, RC4, 3DES) on sensitive data, bcrypt with insufficient cost, single key without rotation encrypting all data, absence of HSTS on an app handling credentials, weak PRNG for a short-lived value                                   | 🟠 High          |
+| Obsolete algorithm (DES, RC4, 3DES) on sensitive data, bcrypt with a very low cost (< 8), single key without rotation encrypting all data, absence of HSTS on an app handling credentials, weak PRNG for a short-lived value                                   | 🟠 High          |
 | MD5/SHA-1 for non-critical integrity verification, TLS 1.1 still accepted, absence of documented key rotation, architecture without DEK/KEK on moderately sensitive data                                                                                   | 🟡 Medium        |
 | SHA-256 used where Argon2id would be preferable but without compromised production data, absence of crypto-agility on a non-critical system                                                                                                                | 🟢 Low           |
-| Absence of a post-quantum migration path on a non-critical system, RSA 2048 where 4096 would be preferable, correct algorithm but not the recommended first choice                                                                                         | ℹ️ Informational |
+| Absence of a post-quantum migration path for long-lived sensitive data, correct algorithm but not the recommended first choice                                                                                                                              | ℹ️ Informational |
 
 ---
 
@@ -406,38 +406,17 @@ This model makes it possible to:
 | `SHA1`                                          | Weak for signatures, acceptable for non-security uses                                      | Check the usage context: token signature vs. content hash                                                   |
 | `rejectUnauthorized: false`                     | May be present only in test or local development code                                      | Check whether this code is gated on `NODE_ENV === 'development'` or present in the production configuration |
 | API key in a config variable                    | May be a value injected by the environment, not hardcoded                                  | Check whether it is `process.env.API_KEY` (injected) or a hardcoded literal value                           |
-| `bcrypt` hashing algorithm with `saltRounds: 8` | May look weak but remains acceptable; OWASP recommends >= 10, not a critical vulnerability | Note as Informational if fewer than 10 rounds                                                               |
+| `bcrypt` hashing algorithm with `saltRounds: 8` | Below the OWASP recommendation (>= 10) but still an adaptive hash, not a critical vulnerability | Report as 🟢 Low for cost 8 or 9                                                                            |
 
 ---
 
-## Finding Template for the Report
+## Finding template for the report
 
-````
-**[OWASP-A04-NNN]** - [Short title]
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-- **Severity:** [level + icon]
-- **Confidence:** 🔵 High / 🟣 Medium / ⚪ Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence, specify the sensitivity of the data involved]
-- **Subtype:** A04.X - [subtype name]
-- **Location:** [file:line / function / endpoint]
-- **Description:** [explanation of the failing cryptographic mechanism]
-- **Potential impact:** [what an attacker can obtain, decrypted data, stolen session, etc.]
-- **Evidence / Vulnerable example:**
-  ```[language]
-  // audited excerpt - secrets replaced with [SECRET MASKED]
-````
-
-- **Recommendation:** [concrete action with the recommended algorithm/library]
-- **Remediation example:**
-  ```[language]
-  // fixed version
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A02:2021](https://owasp.org/Top10/A02_2021-Cryptographic_Failures/) | [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) (if applicable)
-
-```
-
-> Note: Cryptographic Failures corresponds to A02 in the OWASP Top 10 2021. In this orchestrator's 2025 reference framework, it is A04.
+- **Sub-type:** A04.X - [sub-type name]
+- **Severity justification:** [1 sentence; specify the sensitivity of the data involved]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A04:2025 - Cryptographic Failures](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/) | [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) (if applicable)
 
 ---
 
@@ -448,6 +427,6 @@ This model makes it possible to:
 - **Effective key rotation**: a DEK/KEK architecture may be described in the code but never applied operationally, which is not verifiable statically.
 - **Sensitive data stored in cleartext**: requires access to the database or storage artifacts to confirm the actual format of the stored data.
 - **Post-quantum risk**: a contextual assessment depending on the data's lifespan, not determinable from the code alone.
+- **Keys and certificates managed outside the repository** (KMS, HSM, load balancer TLS settings): not visible in the code; note them as not assessed rather than assuming they are misconfigured.
 
 Mention these limitations in the "Limitations" section of the report and propose the relevant dynamic verifications with explicit validation.
-```

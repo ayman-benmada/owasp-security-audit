@@ -1,10 +1,10 @@
-# A09 - Security Logging and Monitoring Failures
+# A09 - Security Logging and Alerting Failures
 
 **Reference:** OWASP Top 10 (2025), category A09
-**Main associated CWEs:** CWE-117, CWE-223, CWE-532, CWE-778
+**Key CWEs:** CWE-117, CWE-221, CWE-223, CWE-532, CWE-778
 **Finding format:** `OWASP-A09-NNN`
 
-This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A09. It provides the detection patterns, standard fixes, and severity grid specific to security logging and monitoring failures.
+This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A09. It provides the detection patterns, standard fixes, and severity grid specific to security logging and alerting failures.
 
 ---
 
@@ -57,7 +57,7 @@ Review high-security-stakes endpoints and features and check:
 
 - Are the logs only local (deletable by an attacker who has compromised the server)?
 - Is there a separate centralized system (SIEM, Loki, Graylog, ELK)?
-- Are there alert rules for OWASP CRITICAL events?
+- Are there alert rules for high-signal events (see A09.6)?
 
 ### 4. Inherent limitations of static analysis for A09
 
@@ -241,8 +241,12 @@ Log::info('authn_login_attempt', [
 private function safeLogValue(?string $v): string
 {
     // Escapes rather than removes - preserves forensic information
-    $cleaned = preg_replace('/[\x00-\x1F\x7F]/u', '', $v ?? '');
-    return mb_substr($cleaned, 0, 256); // limits the size
+    $escaped = preg_replace_callback(
+        '/[\x00-\x1F\x7F]/',
+        fn ($m) => sprintf('\\x%02x', ord($m[0])),
+        $v ?? ''
+    );
+    return mb_substr($escaped, 0, 256); // limits the size
 }
 ```
 
@@ -273,7 +277,9 @@ function sanitizeLogValue(value) {
 
 ### A09.4 - Uncaught exceptions
 
-**CWE-390** - Detection of Error Condition Without Action | **CWE-778** - Insufficient Logging
+**CWE-778** - Insufficient Logging | related: CWE-390 Detection of Error Condition Without Action
+
+> **Deduplication:** this sub-type covers the missing *log entry*. If the exception handling itself is flawed (fail open, swallowed error, missing rollback), report under A10 and add `→ See also A09.4`.
 
 **Pattern:** uncaught exceptions leave the application blind to exploits that trigger internal errors. Without a `try/catch` with logging, the system does not know a problem occurred and cannot record it.
 
@@ -377,9 +383,9 @@ public function transfer(Request $request)
 
 - Absence of alert configuration in the provided monitoring tools.
 - Logs produced but no documented ingestion or correlation pipeline.
-- OWASP CRITICAL events not covered by alert rules.
+- High-signal events (A09.6 table) not covered by alert rules.
 
-**OWASP events classified as CRITICAL: must trigger an immediate alert:**
+The events below are classified `CRITICAL` in the [OWASP Logging Vocabulary Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Vocabulary_Cheat_Sheet.html) and are good candidates for immediate alerting:
 
 | OWASP Event                  | Description                                        | Signal                                 |
 | ---------------------------- | -------------------------------------------------- | -------------------------------------- |
@@ -404,7 +410,7 @@ public function transfer(Request $request)
 6. **Systematic try/catch on critical operations**: with server-side error logging and a generic response to the client.
 7. **Centralize logs on a separate system**: separate from the application, read-only after writing, access tracked.
 8. **Dedicated account for database logs**: `INSERT` rights only, no `UPDATE` or `DELETE`.
-9. **Alerts on OWASP CRITICAL events**: `authn_token_reuse`, `authz_fail`, `authn_impossible_travel`, `session_use_after_expire`, `malicious_direct_reference`, `malicious_extraneous`.
+9. **Alerts on high-signal events** (OWASP Logging Vocabulary `CRITICAL` level): `authn_token_reuse`, `authz_fail`, `authn_impossible_travel`, `session_use_after_expire`, `malicious_direct_reference`, `malicious_extraneous`.
 10. **Never return the stack trace to the client**: keep it in server logs only, with a `tx_id` in the response to allow correlation.
 
 ---
@@ -415,7 +421,7 @@ public function transfer(Request $request)
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
 | Credentials, tokens, or health/banking data in clear text in accessible logs; log injection allowing XSS in an administration dashboard                                                            | 🔴 Critical      |
 | Total absence of logging on an app exposed with sensitive data; logs only local on a critical app without SIEM; sensitive personal data in the logs                                                | 🟠 High          |
-| Partial logging (successes without failures or vice versa); absence of alerting on OWASP CRITICAL events; uncaught exceptions on financial operations; log injection without an impacted dashboard | 🟡 Medium        |
+| Partial logging (successes without failures or vice versa); absence of alerting on high-signal security events; uncaught exceptions on financial operations; log injection without an impacted dashboard | 🟡 Medium        |
 | Absence of alerting on a non-critical app; local logs on a low-sensitivity app; unstructured log format (plain text rather than JSON)                                                              | 🟢 Low           |
 | Absence of a dedicated INSERT-only account for database logs (with no other gap); non-automated log rotation                                                                                       | ℹ️ Informational |
 
@@ -426,7 +432,7 @@ public function transfer(Request $request)
 | Detected pattern                            | Reason for the false positive                                                          | How to verify                                                                                                    |
 | ------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `console.log(user)` or `logger.debug(data)` | May be conditioned on `NODE_ENV === 'development'` and absent in production            | Check whether the log is under a level condition (`debug` vs `info/warn/error`) or an environment condition      |
-| Absence of logging on an action             | May not be a security event: not all actions need to be logged                         | Assess whether the action is listed in the OWASP checklist of critical events                                    |
+| Absence of logging on an action             | May not be a security event: not all actions need to be logged                         | Assess whether the action is a security event (authentication, authorization, sensitive data access, admin actions) |
 | Sensitive data in the logs                  | May be masked by a logger serializer (e.g. `redact` in pino, Monolog filtering)        | Check the logger configuration for redaction rules                                                               |
 | No alert visible in the code                | Alerts may be configured in a SIEM, an external monitoring system, or CloudWatch rules | Check whether an external monitoring tool is integrated                                                          |
 | Exception swallowed without logging         | May be intentional for non-security business errors (e.g. duplicate attempt)           | Assess whether the exception has a security impact: business validation errors do not all require a security log |
@@ -435,32 +441,11 @@ public function transfer(Request $request)
 
 ## Finding template for the report
 
-````
-**[OWASP-A09-NNN]** - [Short title]
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-- **Severity:** [level + icon]
-- **Confidence:** 🔵 High / 🟣 Medium / ⚪ Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence, specifying the impact on detection or investigation capability]
-- **Subtype:** A09.X - [subtype name]
-- **Location:** [file:line / endpoint / logging configuration]
-- **Description:** [explanation of the failure and its operational impact]
-- **Potential impact:** [inability to detect an intrusion, exposure of sensitive data, log forgery]
-- **Evidence / Vulnerable example:**
-  ```[language]
-  // audited excerpt
-````
-
-- **Recommendation:** [concrete action]
-- **Remediation example:**
-  ```[language]
-  // fixed version
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A09:2021](https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/) | [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html)
-
-```
-
-> Note: Security Logging and Monitoring Failures corresponds to A09 in the OWASP Top 10 2021. In this orchestrator's 2025 reference framework, it is also A09.
+- **Sub-type:** A09.X - [sub-type name]
+- **Severity justification:** [1 sentence; specify the impact on detection, alerting, or investigation capability]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A09:2025 - Security Logging and Alerting Failures](https://owasp.org/Top10/2025/A09_2025-Security_Logging_and_Alerting_Failures/) | [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html)
 
 ---
 
@@ -475,4 +460,3 @@ A09 is the most difficult category to assess statically: the absence of logging 
 - **Exploitable log injection**: detecting raw interpolation is possible. Confirming that the log injection is exploitable (dashboard without HTML encoding) requires knowing the tool that consumes the logs.
 
 Systematically mention these limitations in the "Limitations" section of the report for A09: this is the category where "Not assessable (insufficient context)" is most frequently legitimate.
-```

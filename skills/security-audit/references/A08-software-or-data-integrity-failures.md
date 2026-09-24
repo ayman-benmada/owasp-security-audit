@@ -1,10 +1,10 @@
-# A08 - Software and Data Integrity Failures
+# A08 - Software or Data Integrity Failures
 
 **Reference standard:** OWASP Top 10 (2025), category A08
-**Main associated CWEs:** CWE-345, CWE-346, CWE-349, CWE-354, CWE-494, CWE-502, CWE-506, CWE-565, CWE-601, CWE-829, CWE-830
+**Key CWEs:** CWE-345, CWE-353, CWE-494, CWE-502, CWE-506, CWE-565, CWE-784, CWE-829, CWE-830, CWE-915
 **Finding format:** `OWASP-A08-NNN`
 
-This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A08. It provides detection patterns, standard fixes, and the severity grid specific to software and data integrity failures.
+This file is loaded by the `owasp-security-audit` orchestrator skill when analyzing category A08. It provides detection patterns, standard fixes, and the severity grid specific to software or data integrity failures.
 
 ---
 
@@ -34,7 +34,7 @@ Before declaring an A08 finding, verify that **the attacker can influence the de
 - `pickle.loads()` or `unserialize()` on data **generated and stored by the same system** with no possible external interference
 - Deserialization of data coming from a **trusted internal source** (another microservice with mTLS, internal database)
 - CI/CD pipeline using actions without a SHA hash but coming from the **official organization** with active branch protection
-- Signed data verified further down the flow, the verification does not necessarily have to happen at the point of deserialization
+- For data formats that cannot execute code (JSON with schema validation), a signature check performed further down the flow can be sufficient. For native deserialization (`unserialize`, `pickle`, `ObjectInputStream`), the check must happen **before** deserialization, never after
 
 ---
 
@@ -142,7 +142,7 @@ jobs:
 
 **Detection, look for:**
 
-```json
+```jsonc
 // ❌ Floating versions - non-deterministic resolution
 {
   "dependencies": {
@@ -159,18 +159,20 @@ jobs:
 
 **Vulnerable vs. fixed code:**
 
-```json
+```jsonc
 // ✅ Pinned versions
 {
   "dependencies": {
     "lodash": "4.17.21",
     "internal-utils": "1.2.3"
-  },
-  "scripts": {
-    // lockfile-lint validates HTTPS + official source before any install
-    "preinstall": "npx --yes lockfile-lint --path package-lock.json --validate-https --allowed-hosts npm"
   }
+  // lockfile-lint itself is pinned in devDependencies and installed from the lockfile
 }
+```
+
+```yaml
+# ✅ CI step: validate lockfile sources before installing (no ad-hoc `npx --yes` download)
+- run: npx lockfile-lint --path package-lock.json --validate-https --allowed-hosts npm
 ```
 
 ```bash
@@ -181,6 +183,8 @@ npm install
 npm ci
 npm audit --audit-level=high
 ```
+
+**Overlap with A03.3:** floating versions and missing lockfiles are described in both guides. Report them once, under A08.2 when the concern is integrity of what gets installed, or A03.3 when it is exposure to vulnerable versions.
 
 **Dependency confusion:** an attack in which an attacker publishes a package on a public registry that has the same name as an internal package. If the resolver checks the public registry first, it installs the malicious package. Detect this by verifying that internal packages are configured to resolve only from the internal registry (`.npmrc` with `@scope:registry=https://internal-registry/`).
 
@@ -241,7 +245,7 @@ Object obj = ois.readObject();
 ```
 
 ```csharp
-// ❌ .NET - BinaryFormatter (deprecated since .NET 5, forbidden in .NET 7+)
+// ❌ .NET - BinaryFormatter (obsolete since .NET 5; the implementation was removed in .NET 9)
 BinaryFormatter bf = new BinaryFormatter();
 object obj = bf.Deserialize(stream);
 ```
@@ -294,7 +298,7 @@ $session = unserialize($payload, ['allowed_classes' => ['UserSession', 'UserPref
 | PHP `serialize()` / `unserialize()` | High                | Replace with JSON                |
 | Python `pickle`                     | High                | Replace with JSON                |
 | Java `ObjectInputStream`            | High                | Replace with JSON/Protobuf       |
-| .NET `BinaryFormatter`              | High                | Forbidden since .NET 7           |
+| .NET `BinaryFormatter`              | High                | Removed in .NET 9, migrate       |
 | JSON                                | None                | Recommended format               |
 | Protobuf / MessagePack              | Low                 | Acceptable with validated schema |
 | YAML (with constructors)            | Moderate            | Disable custom constructors      |
@@ -305,13 +309,13 @@ $session = unserialize($payload, ['allowed_classes' => ['UserSession', 'UserPref
 
 ### A08.4 - Unverified signed or encrypted data
 
-**CWE-345** - Insufficient Verification of Data Authenticity | **CWE-346** - Origin Validation Error
+**CWE-345** - Insufficient Verification of Data Authenticity | **CWE-565** - Reliance on Cookies without Validation and Integrity Checking
 
 **Pattern:** data presented as authentic (tokens, signed cookies, webhooks) is accepted without verification of its cryptographic integrity, or with incorrect verification.
 
 **Detection, look for:**
 
-- **JWT**: `jwt.decode()` without `jwt.verify()`, `none` algorithm accepted, `alg` field read from the token itself (see A04.6 and A07.8 for details).
+- **JWT**: `jwt.decode()` without `jwt.verify()`, `none` algorithm accepted, `alg` field read from the token itself. Report these under A04.6 / A07.8, not here.
 - **Signed cookies**: signature checked with a non-constant-time comparison (vulnerable to timing attacks) instead of `hash_equals()` / `hmac.compare_digest()`.
 - **Webhooks**: webhook payload (GitHub, Stripe, Shopify) accepted without verifying the HMAC signature provided in the headers.
 - **Downloads**: files or configurations downloaded from CDNs without verifying the hash announced by the provider.
@@ -345,10 +349,11 @@ app.post(
         .update(req.body) // raw, unparsed body
         .digest("hex");
 
-    // Constant-time comparison - resistant to timing attacks
-    if (
-      !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
-    ) {
+    // Constant-time comparison - resistant to timing attacks.
+    // timingSafeEqual throws on length mismatch, so check presence and length first.
+    const received = Buffer.from(signature ?? "", "utf8");
+    const wanted = Buffer.from(expected, "utf8");
+    if (received.length !== wanted.length || !crypto.timingSafeEqual(received, wanted)) {
       return res.status(401).send("Invalid signature");
     }
 
@@ -360,6 +365,28 @@ app.post(
 ```
 
 **Typical severity:** High to Critical depending on the action triggered by the webhook or the data accepted.
+
+---
+
+### A08.5 - Mass assignment
+
+**CWE-915** - Improperly Controlled Modification of Dynamically-Determined Object Attributes
+
+**Pattern:** request data is bound directly to a model or object, so a client can set attributes the form or API never intended to expose (`role`, `isAdmin`, `balance`, `ownerId`, `emailVerified`).
+
+**Detection, look for:**
+
+- `Object.assign(entity, req.body)`, `Model.create(req.body)`, `User.update(req.body)` (Node.js ORMs).
+- `$model->fill($request->all())` or `Model::create($request->all())` with no `$fillable` or with `$guarded = []` (Laravel).
+- Django `ModelSerializer` with `fields = "__all__"` on writable endpoints; `Model.objects.create(**request.data)`.
+- Spring `@RequestBody` or `@ModelAttribute` bound directly to a JPA entity.
+- GraphQL input types that expose privileged fields.
+
+**Fix:** bind to an explicit allowlist of fields (DTO, serializer with explicit `fields`, `$fillable`, `pick()`), never to the persistence entity directly.
+
+**Deduplication:** when mass assignment results in privilege escalation (writable `role`, `isAdmin`, `permissions`), report it under A01.5 and add `→ See also A08.5` here. Otherwise report it here.
+
+**Typical severity:** 🟠 High (ownership, balance, or verification fields writable) to 🟡 Medium (fields with limited security impact). Privilege escalation cases are reported under A01.5.
 
 ---
 
@@ -383,7 +410,7 @@ app.post(
 | Finding criteria                                                                                                                                                                                                                                                           | Severity      |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
 | Native deserialization on external data without signature (potential RCE), pipeline with a floating tag on an action that has write access to secrets or the registry, confirmed dependency confusion, webhook without signature verification triggering sensitive actions | Critical      |
-| Pipeline with floating tags without critical access, `curl \| bash` script without verification, JWT accepted without signature verification (see A07.8), missing lockfile on an exposed app                                                                               | High          |
+| Pipeline with floating tags without critical access, `curl \| bash` script without verification, missing lockfile on an exposed app, mass assignment of sensitive fields (A08.5)                                                                               | High          |
 | Floating versions without a lockfile on non-critical dependencies, absence of `lockfile-lint` in CI, webhook without verification on a low-impact action                                                                                                                   | Medium        |
 | `npm install` instead of `npm ci` in CI (lockfile present), absence of a vulnerability audit in CI (scanning present elsewhere in the pipeline)                                                                                                                            | Low           |
 | Absence of an internal registry (with no other gap), missing pipeline security documentation                                                                                                                                                                               | Informational |
@@ -406,32 +433,11 @@ app.post(
 
 ## Finding template for the report
 
-````
-**[OWASP-A08-NNN]** - [Short title]
+Use the finding block defined in `SKILL.md` (Step 5). Category-specific fields:
 
-- **Severity:** [level + icon]
-- **Confidence:** High / Medium / Low `[MANUAL VERIFICATION REQUIRED if Low]`
-- **Remediation effort:** Low (<1h) / Medium (1-4h) / High (>4h) / Architectural
-- **Justification:** [1 sentence, specify the effective privileges of the compromised entry point]
-- **Subtype:** A08.X - [subtype name]
-- **Location:** [file:line / workflow / CI step / endpoint]
-- **Description:** [injection or integrity-bypass mechanism]
-- **Potential impact:** [RCE, artifact tampering, secret exfiltration, etc.]
-- **Evidence / Vulnerable example:**
-  ```[language/yaml]
-  // audited excerpt
-````
-
-- **Recommendation:** [immutable reference, signature, alternative format]
-- **Remediation example:**
-  ```[language/yaml]
-  // fixed version
-  ```
-- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A08:2021](https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/) | [OWASP Deserialization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html)
-
-```
-
-> Note: Software and Data Integrity Failures corresponds to A08 in the OWASP Top 10 2021. In this orchestrator's 2025 reference standard, it is also A08.
+- **Sub-type:** A08.X - [sub-type name]
+- **Severity justification:** [1 sentence; specify the effective privileges of the compromised entry point]
+- **References:** [CWE-XXX](https://cwe.mitre.org/data/definitions/XXX.html) | [OWASP A08:2025 - Software or Data Integrity Failures](https://owasp.org/Top10/2025/A08_2025-Software_or_Data_Integrity_Failures/) | [OWASP Deserialization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html)
 
 ---
 
@@ -444,4 +450,3 @@ app.post(
 - **Actual artifact contents**: what is actually bundled into a Docker image or a published npm package can only be confirmed by inspecting the built artifact, not solely the Dockerfile or the package.json.
 
 Mention these limitations in the "Limitations" section of the report and propose the relevant dynamic verifications with explicit validation.
-```
