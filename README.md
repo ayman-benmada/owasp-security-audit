@@ -1,6 +1,6 @@
 # OWASP Security Audit
 
-An agent skill for **Claude Code** and **Cursor** that performs an evidence-based security review of a codebase against the **OWASP Top 10:2025** and produces a structured report with separate severity and confidence ratings.
+An agent skill for **Claude Code**, **Cursor**, and **Codex** that performs an evidence-based security review of a codebase against the **OWASP Top 10:2025** and produces a structured report with separate severity and confidence ratings.
 
 It is a first-pass review, not a replacement for a penetration test or a dedicated SAST/DAST pipeline. The analysis is mostly static and performed by a language model: it can miss issues and it can be wrong, which is why every finding carries a confidence level and the report lists what could not be assessed.
 
@@ -70,12 +70,24 @@ cp -R owasp-security-audit/skills/security-audit ~/.cursor/skills/security-audit
 
 Then restart Cursor or run **Developer: Reload Window**.
 
+### Codex
+
+The existing repository marketplace is recognized by Codex. Add it, then install the plugin:
+
+```bash
+codex plugin marketplace add ayman-benmada/owasp-security-audit
+codex plugin add owasp-security-audit@owasp-security-audit-marketplace
+```
+
+The [portable root manifest](plugin.json) defines the plugin identity and discovers the shared skill in `skills/`. The [Codex compatibility manifest](.codex-plugin/plugin.json) supplies Codex presentation metadata. This is the [documented two-manifest layout](https://developers.openai.com/plugins/build/plugins): the root manifest has no inline `extensions.com.openai`, so Codex can use the compatibility manifest. No separate MCP server or account connection is needed.
+
 ## Usage
 
 The skill can be selected automatically when you ask for a security audit, or invoked explicitly.
 
 - **Claude Code:** `/owasp-security-audit:security-audit`
 - **Cursor:** `/security-audit` in Agent chat
+- **Codex:** ask for an application security audit or invoke the `security-audit` skill from the skill picker.
 
 Example request:
 
@@ -98,13 +110,15 @@ The skill may ask a focused question when the target or scope cannot be inferred
 └── marketplace.json       # Claude Code marketplace catalog (this repository)
 .cursor-plugin/
 └── plugin.json            # Cursor plugin manifest
+plugin.json                # Portable plugin manifest for Codex
+.codex-plugin/
+└── plugin.json            # Codex presentation and compatibility manifest
 assets/
 └── logo.png
 skills/
-└── security-audit/        # Shared skill (Claude Code + Cursor)
+└── security-audit/        # Shared skill (Claude Code + Cursor + Codex)
     ├── SKILL.md           # Operating rules, stack checks, and category routing
-    ├── references/        # Category guides, runtime checks, and report format
-    └── evals/             # Behavioral scenarios and expected results
+    └── references/        # Category guides, runtime checks, and report format
 ```
 
 ## License

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "owasp-security-audit",
+  "version": "1.0.0",
+  "description": "Audits your codebase against the OWASP Top 10:2025 and produces an evidence-backed security report. Detects the actual stack and execution context, rates severity and confidence separately, masks secrets, and asks before running project or third-party code.",
+  "author": {
+    "name": "Ayman BENMADA"
+  },
+  "homepage": "https://github.com/ayman-benmada/owasp-security-audit",
+  "repository": "https://github.com/ayman-benmada/owasp-security-audit",
+  "license": "MIT",
+  "keywords": [
+    "owasp",
+    "owasp-top-10",
+    "security",
+    "security-audit",
+    "appsec",
+    "code-review",
+    "vulnerability",
+    "static-analysis"
+  ]
+}
